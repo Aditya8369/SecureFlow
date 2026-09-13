@@ -90,6 +90,10 @@ async function handler(request: NextRequest, { params }: { params: Promise<{ id:
   if (!finding) {
     return NextResponse.json({ error: "Forbidden: You do not have access to this finding" }, { status: 403 });
   }
+
+  // Declared before the cache check: both the cached and the live stream encode SSE frames.
+  const encoder = new TextEncoder();
+
   const cacheKey = createExplanationCacheKey({
     findingType: finding.type,
     severity: finding.severity,
@@ -135,7 +139,6 @@ async function handler(request: NextRequest, { params }: { params: Promise<{ id:
   });
 }
 
-  const encoder = new TextEncoder();
   const { signal: abortSignal, release } = streamManager.register(request.signal, 'explain-stream');
 
   let closed = false;

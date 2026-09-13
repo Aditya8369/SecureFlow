@@ -147,10 +147,10 @@ export async function handlePullRequestSynchronize(payload: Record<string, unkno
 
           console.log(`[SBOM] Found ${vulnerabilities.length} vulnerabilities in ${file.filename}`);
 
-          // Save findings to Database
-          for (const vuln of vulnerabilities) {
-            await prisma.finding.create({
-              data: {
+          // Batch create findings to avoid N+1 queries
+          if (vulnerabilities.length > 0) {
+            await prisma.finding.createMany({
+              data: vulnerabilities.map((vuln) => ({
                 pullRequestId: prRecord.id,
                 type: "DEPENDENCY_VULNERABILITY",
                 severity: vuln.severity,
@@ -160,7 +160,7 @@ export async function handlePullRequestSynchronize(payload: Record<string, unkno
                 remediation: `Update ${vuln.dependency.name} to version ${vuln.patchedVersion} or higher.`,
                 line: 0, // Line 0 indicates manifest-level finding
                 aiExplanation: `Detected known vulnerability ${vuln.cveId} in ${vuln.dependency.name}.`,
-              },
+              })),
             });
           }
         }

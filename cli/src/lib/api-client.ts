@@ -27,7 +27,7 @@ export class NetworkUnavailableError extends Error {
 }
 
 const DEFAULT_TIMEOUT_MS = 5_000;
-const DEFAULT_BASE_URL = process.env.SECUREFLOW_API_URL ?? "https://secure-flow-six.vercel.app";
+const DEFAULT_BASE_URL = "https://secure-flow-six.vercel.app";
 
 /**
  * Sends staged file contents to the hosted AI scanner. Fails fast (short

@@ -1,5 +1,6 @@
 import { worker } from "../src/lib/queue/worker";
 import { outboundWorker } from "../src/lib/queue/outboundWorker";
+import { sbomWorker } from "../src/lib/queue/sbomWorker";
 import { scanWorkerPool } from "../src/lib/queue/workerPool";
 import { setupWorkerSignalHandlers } from "../src/lib/queue/shutdown";
 import { describeWorkerStartup, planWorkerStartup } from "../src/lib/queue/scan-worker-bootstrap";
@@ -27,6 +28,14 @@ outboundWorker.on("error", (err) => {
   console.error("❌ BullMQ Worker (Outbound) Error:", err);
 });
 
+sbomWorker.on("ready", () => {
+  console.log("🚀 BullMQ Worker (SBOM) successfully initialized and waiting for jobs...");
+});
+
+sbomWorker.on("error", (err) => {
+  console.error("❌ BullMQ Worker (SBOM) Error:", err);
+});
+
 // The `vulnerability-scans` queue had a producer — `POST /api/findings` via
 // `enqueueScan` — and no consumer, so every job it enqueued sat in Redis while
 // its ScanJob row stayed PENDING forever (#750).
@@ -44,7 +53,7 @@ const server = app.listen(3000, () => {
 });
 
 setupWorkerSignalHandlers({
-  workers: [worker, outboundWorker],
+  workers: [worker, outboundWorker, sbomWorker],
   // `scanWorkerPool` is not a BullMQ `Worker`, so it cannot go in `workers`.
   // Without this a SIGTERM exits with a scan mid-flight still holding its lock.
   drain: plan.scanWorkerEnabled ? [() => scanWorkerPool.stop()] : [],

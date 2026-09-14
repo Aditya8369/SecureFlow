@@ -15,8 +15,7 @@ import {
 } from "@/lib/github/webhook-verification";
 import prisma from "@/lib/prisma";
 import { Octokit } from "octokit";
-import { parseManifestFile } from "@/lib/sbom/dependency-parser";
-import { matchVulnerabilities } from "@/lib/sbom/vulnerability-matcher";
+import { enqueueSbomScan } from "@/lib/queue/sbomQueue";
 
 /**
  * GitHub webhook ingest (#562).
@@ -138,30 +137,13 @@ export async function handlePullRequestSynchronize(payload: Record<string, unkno
         );
 
         if (content) {
-          // Parse dependencies
-          const dependencies = parseManifestFile(content, file.filename);
-
-          // Match against CVE database
-          const vulnerabilities = matchVulnerabilities(dependencies);
-
-          console.log(`[SBOM] Found ${vulnerabilities.length} vulnerabilities in ${file.filename}`);
-
-          // Save findings to Database
-          for (const vuln of vulnerabilities) {
-            await prisma.finding.create({
-              data: {
-                pullRequestId: prRecord.id,
-                type: "DEPENDENCY_VULNERABILITY",
-                severity: vuln.severity,
-                file: file.filename,
-                description: `${vuln.dependency.name}@${vuln.dependency.version}: ${vuln.description}`,
-                codeSnippet: `Dependency: ${vuln.dependency.name}\nCurrent: ${vuln.dependency.version}\nPatched: ${vuln.patchedVersion || "Unknown"}`,
-                remediation: `Update ${vuln.dependency.name} to version ${vuln.patchedVersion} or higher.`,
-                line: 0, // Line 0 indicates manifest-level finding
-                aiExplanation: `Detected known vulnerability ${vuln.cveId} in ${vuln.dependency.name}.`,
-              },
-            });
-          }
+          // Offload SBOM dependency scan to background queue (#809)
+          await enqueueSbomScan({
+            fileName: file.filename,
+            content,
+            userId: "",
+          });
+          console.log(`[SBOM] Enqueued asynchronous SBOM scan for manifest: ${file.filename}`);
         }
       }
     }

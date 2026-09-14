@@ -16,10 +16,97 @@ import { sbomDLQ, SbomJobData, SBOM_QUEUE_NAME } from "./sbomQueue";
 import type { SbomScanResult } from "@/types/sbom";
 import { sanitizeAuditLogInput } from "@/lib/audit/minimization";
 import { createLogger } from "@/lib/logger";
+import { computeFingerprint } from "@/lib/armor/fingerprint";
+import { toStoredSeverity, totalRiskScore } from "@/lib/severity";
+import { normalizePolicyDecisionEnum } from "@/lib/finding-taxonomy";
 
 const log = createLogger({ context: { component: "sbom-worker" } });
 
 export const DEFAULT_SBOM_CONCURRENCY = 5;
+
+/**
+ * Recover the persisted result of an already-completed ScanJob without reprocessing.
+ */
+async function recoverCompletedResult(
+  scanJobId: string,
+  pullRequestId?: string | null,
+): Promise<SbomScanResult> {
+  // 1. Try Redis cache (ephemeral acceleration)
+  if (redis && typeof redis.get === "function") {
+    try {
+      const cached = await redis.get(`sbom:result:${scanJobId}`);
+      if (cached) {
+        return JSON.parse(cached);
+      }
+    } catch (err) {
+      log.warn("Redis unavailable during completed result recovery", {
+        scanJobId,
+        error: (err as Error).message,
+      });
+    }
+  }
+
+  // 2. Recover from PostgreSQL AuditLog
+  try {
+    const completedAudit = await prisma.auditLog.findFirst({
+      where: {
+        resource: scanJobId,
+        action: { in: ["SBOM Scan Completed", "SBOM SCAN COMPLETED"] },
+      },
+      select: { metadata: true },
+    });
+    if (completedAudit?.metadata && typeof completedAudit.metadata === "object") {
+      const meta = completedAudit.metadata as Record<string, unknown>;
+      if (meta.result) {
+        return meta.result as SbomScanResult;
+      }
+    }
+  } catch (err) {
+    log.warn("AuditLog lookup failed during completed result recovery", {
+      scanJobId,
+      error: (err as Error).message,
+    });
+  }
+
+  // 3. Recover from durable ScanResult and Findings if pullRequest is associated
+  if (pullRequestId) {
+    try {
+      const scanResult = await prisma.scanResult.findFirst({
+        where: { pullRequestId },
+        orderBy: { createdAt: "desc" },
+        include: { findings: true },
+      });
+      if (scanResult) {
+        return {
+          scanId: scanJobId,
+          timestamp: scanResult.createdAt,
+          totalDependencies: 0,
+          vulnerabilities: scanResult.findings.map((f: any) => ({
+            dependency: {
+              name: f.codeSnippet?.split("@")[0]?.replace("Dependency: ", "") || "unknown",
+              version: f.codeSnippet?.split("@")[1]?.split("\n")[0] || "unknown",
+            },
+            cveId: f.explanation?.match(/CVE-[A-Za-z0-9-]+/)?.[0] || "CVE-UNKNOWN",
+            severity: f.severity as any,
+            description: f.explanation || "",
+            patchedVersion: f.remediation?.replace(/Update .* to version | or higher\./g, "") || "",
+          })),
+          status: scanResult.policyDecision === "BLOCK" ? "VULNERABLE" : "CLEAN",
+        };
+      }
+    } catch (err) {
+      log.warn("ScanResult lookup failed during completed result recovery", {
+        scanJobId,
+        error: (err as Error).message,
+      });
+    }
+  }
+
+  // 4. If result genuinely cannot be recovered, raise terminal error rather than silently reprocessing
+  throw new UnrecoverableError(
+    `Persisted result for completed ScanJob ${scanJobId} cannot be recovered`,
+  );
+}
 
 /**
  * Process a single SBOM scan job.
@@ -27,38 +114,63 @@ export const DEFAULT_SBOM_CONCURRENCY = 5;
  * Exported so unit tests can invoke it directly without reaching into BullMQ internals.
  */
 export async function processSbomJob(job: Job<SbomJobData>): Promise<SbomScanResult> {
-  const { scanJobId, fileName, content, userId, repositoryId } = job.data;
+  const { scanJobId, fileName, content, userId, repositoryId, pullRequestId } = job.data;
 
-  // 1. Idempotency check: if this scan is already completed, return cached/existing result
+  // 1. Query ScanJob first
   const existingJob = await prisma.scanJob.findUnique({
     where: { id: scanJobId },
   });
 
-  if (existingJob?.status === "COMPLETED") {
-    log.info("SBOM scan job already completed, skipping re-processing", { scanJobId });
-    if (redis && typeof redis.get === "function") {
-      const cached = await redis.get(`sbom:result:${scanJobId}`);
-      if (cached) return JSON.parse(cached);
+  if (!existingJob) {
+    throw new UnrecoverableError(`ScanJob ${scanJobId} not found`);
+  }
+
+  const effectivePrId = pullRequestId || existingJob.pullRequestId;
+  const effectiveRepoId = repositoryId || existingJob.repositoryId;
+
+  // 2. Idempotency check: if this scan is already COMPLETED, recover result without reprocessing
+  if (existingJob.status === "COMPLETED") {
+    log.info("SBOM scan job already completed, recovering durable result", { scanJobId });
+    return await recoverCompletedResult(scanJobId, effectivePrId);
+  }
+
+  // 3. Concurrency-safe transition to PROCESSING
+  const updateResult = await prisma.scanJob.updateMany({
+    where: {
+      id: scanJobId,
+      status: "PENDING",
+    },
+    data: {
+      status: "PROCESSING",
+      startedAt: new Date(),
+    },
+  });
+
+  if (updateResult.count === 0) {
+    // Another worker already advanced this job
+    const current = await prisma.scanJob.findUnique({ where: { id: scanJobId } });
+    if (current?.status === "COMPLETED") {
+      log.info("SBOM scan job completed concurrently, recovering durable result", { scanJobId });
+      return await recoverCompletedResult(scanJobId, effectivePrId);
+    }
+    if (current?.status === "PROCESSING") {
+      log.info("SBOM scan job already PROCESSING by another worker", { scanJobId });
+      return {
+        scanId: scanJobId,
+        timestamp: new Date(),
+        totalDependencies: 0,
+        vulnerabilities: [],
+        status: "CLEAN",
+      };
     }
   }
 
-  // 2. Mark ScanJob as PROCESSING
-  await prisma.scanJob
-    .update({
-      where: { id: scanJobId },
-      data: {
-        status: "PROCESSING",
-        startedAt: new Date(),
-      },
-    })
-    .catch(() => {});
-
   try {
-    // 3. Early validation of manifest syntax — avoid retrying inherently malformed inputs
+    // 4. Early validation of manifest syntax — avoid retrying inherently malformed inputs
     if (fileName.endsWith("package.json")) {
       try {
         JSON.parse(content);
-      } catch (parseErr) {
+      } catch {
         const errorMsg = `Invalid JSON syntax in ${fileName}`;
         await prisma.scanJob
           .update({
@@ -74,7 +186,7 @@ export async function processSbomJob(job: Job<SbomJobData>): Promise<SbomScanRes
       }
     }
 
-    // 4. Perform dependency parsing and vulnerability matching
+    // 5. Perform dependency parsing and vulnerability matching
     const dependencies = parseManifestFile(content, fileName);
     const vulnerabilities = matchVulnerabilities(dependencies);
 
@@ -86,37 +198,86 @@ export async function processSbomJob(job: Job<SbomJobData>): Promise<SbomScanRes
       status: vulnerabilities.length > 0 ? "VULNERABLE" : "CLEAN",
     };
 
-    // 5. Durably persist completion in database
-    await prisma.scanJob.update({
-      where: { id: scanJobId },
-      data: {
-        status: "COMPLETED",
-        scannedFiles: 1,
-        vulnerabilitiesFound: vulnerabilities.length,
-        policyDecision: vulnerabilities.length > 0 ? "BLOCK" : "PASS",
-        completedAt: new Date(),
-      },
-    });
+    const riskScore = totalRiskScore(vulnerabilities.map((v) => ({ severity: v.severity })));
+    const policyDecision = vulnerabilities.length > 0 ? "BLOCK" : "PASS";
 
-    // 6. Record completed event with full result in PostgreSQL AuditLog
-    if (userId) {
-      await prisma.auditLog.create({
-        data: sanitizeAuditLogInput({
-          userId,
-          action: "SBOM Scan Completed",
-          resource: scanJobId,
-          decision: result.status,
-          metadata: {
-            scanJobId,
+    // 6. Durably persist findings and completed status inside a Prisma transaction
+    await prisma.$transaction(async (tx: any) => {
+      // Persist standard ScanResult and Finding records if pullRequestId is available
+      if (effectivePrId) {
+        const findingsData = vulnerabilities.map((vuln) => {
+          const depSnippet = `Dependency: ${vuln.dependency.name}@${vuln.dependency.version}\nPatched: ${vuln.patchedVersion || "Unknown"}`;
+          const fingerprint = computeFingerprint(
+            effectiveRepoId || "unknown",
             fileName,
-            repositoryId: repositoryId ?? null,
-            totalDependencies: dependencies.length,
-            vulnerabilitiesCount: vulnerabilities.length,
-            result,
+            "Vulnerability",
+            `${vuln.dependency.name}@${vuln.dependency.version}`,
+          );
+
+          return {
+            type: "VULNERABILITY" as const,
+            severity: toStoredSeverity(vuln.severity),
+            fileLocation: fileName,
+            lineStart: null,
+            lineEnd: null,
+            codeSnippet: depSnippet,
+            explanation:
+              vuln.description ||
+              `Detected known vulnerability ${vuln.cveId} in ${vuln.dependency.name}.`,
+            remediation: vuln.patchedVersion
+              ? `Update ${vuln.dependency.name} to version ${vuln.patchedVersion} or higher.`
+              : null,
+            promptInjectionSuspected: false,
+            fingerprint,
+          };
+        });
+
+        await tx.scanResult.create({
+          data: {
+            pullRequestId: effectivePrId,
+            riskScore: Math.round(riskScore),
+            policyDecision: normalizePolicyDecisionEnum(policyDecision),
+            findings: {
+              create: findingsData,
+            },
           },
-        }),
+        });
+      }
+
+      // Mark ScanJob as COMPLETED atomically with findings persistence
+      await tx.scanJob.update({
+        where: { id: scanJobId },
+        data: {
+          status: "COMPLETED",
+          scannedFiles: 1,
+          vulnerabilitiesFound: vulnerabilities.length,
+          riskScore: Math.round(riskScore),
+          policyDecision: normalizePolicyDecisionEnum(policyDecision),
+          completedAt: new Date(),
+        },
       });
-    }
+
+      // Record completed event in PostgreSQL AuditLog
+      if (userId) {
+        await tx.auditLog.create({
+          data: sanitizeAuditLogInput({
+            userId,
+            action: "SBOM Scan Completed",
+            resource: scanJobId,
+            decision: result.status,
+            metadata: {
+              scanJobId,
+              fileName,
+              repositoryId: effectiveRepoId ?? null,
+              pullRequestId: effectivePrId ?? null,
+              totalDependencies: dependencies.length,
+              vulnerabilitiesCount: vulnerabilities.length,
+              result,
+            },
+          }),
+        });
+      }
+    });
 
     // 7. Cache in Redis for fast status polling retrieval (24 hour TTL)
     if (redis && typeof redis.set === "function") {

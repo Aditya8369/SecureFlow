@@ -29,6 +29,7 @@ export interface SbomJobData {
   content: string;
   userId: string;
   repositoryId?: string;
+  pullRequestId?: string;
 }
 
 export const sbomQueue = new Queue<SbomJobData>(SBOM_QUEUE_NAME, {
@@ -50,14 +51,16 @@ export const sbomDLQ = new Queue(SBOM_DLQ_NAME, {
 
 export interface EnqueueSbomOptions {
   jobId?: string;
+  dedupeKey?: string;
+  deliveryId?: string;
 }
 
 /**
  * Enqueue an SBOM scan job.
  *
- * Creates a persistent ScanJob record in PostgreSQL for lifecycle tracking,
- * records an initial AuditLog event for ownership verification,
- * and adds the job to the BullMQ Redis queue with deterministic deduplication.
+ * Checks for existing jobs via BullMQ or PostgreSQL deduplication keys before creating
+ * a new ScanJob. Creates a persistent ScanJob record in PostgreSQL for lifecycle tracking,
+ * records an AuditLog event for authorization and durability, and adds the job to BullMQ.
  */
 export async function enqueueSbomScan(
   data: Omit<SbomJobData, "scanJobId">,
@@ -69,10 +72,63 @@ export async function enqueueSbomScan(
     throw new Error(`Manifest file exceeds maximum size limit of ${MAX_SBOM_BYTES} bytes`);
   }
 
-  // 1. Create persistent ScanJob record in PostgreSQL
+  const targetJobId = options.jobId ?? (options.dedupeKey ? `sbom:${options.dedupeKey}` : null);
+
+  // 1. If a deterministic jobId or dedupeKey is provided, check BullMQ for an existing job first
+  if (targetJobId && process.env.NEXT_PUBLIC_MOCK_DB !== "true") {
+    try {
+      const existingJob = await sbomQueue.getJob(targetJobId);
+      if (existingJob?.data?.scanJobId) {
+        const existingScanJob = await prisma.scanJob.findUnique({
+          where: { id: existingJob.data.scanJobId },
+        });
+        if (existingScanJob) {
+          return { jobId: targetJobId, scanJobId: existingScanJob.id };
+        }
+      }
+    } catch {
+      // Redis unavailable or getJob failed; continue to PostgreSQL deduplication check
+    }
+  }
+
+  // 2. Check PostgreSQL for an existing logical scan matching the dedupeKey
+  if (options.dedupeKey) {
+    try {
+      const existingAudit = await prisma.auditLog.findFirst({
+        where: {
+          action: "SBOM Scan Enqueued",
+          metadata: {
+            path: ["dedupeKey"],
+            equals: options.dedupeKey,
+          },
+        },
+        select: { resource: true, metadata: true },
+      });
+      if (existingAudit) {
+        const meta = existingAudit.metadata as Record<string, unknown> | null;
+        const existingScanJobId = (meta?.scanJobId as string) || existingAudit.resource;
+        if (existingScanJobId) {
+          const existingScanJob = await prisma.scanJob.findUnique({
+            where: { id: existingScanJobId },
+          });
+          if (existingScanJob) {
+            return {
+              jobId: targetJobId ?? `sbom-${existingScanJob.id}`,
+              scanJobId: existingScanJob.id,
+            };
+          }
+        }
+      }
+    } catch {
+      // JSON query failed or unsupported; continue to create
+    }
+  }
+
+  // 3. Create persistent ScanJob record in PostgreSQL
   const scanJob = await prisma.scanJob.create({
     data: {
       repositoryId: data.repositoryId || null,
+      pullRequestId: data.pullRequestId || null,
       status: "PENDING",
       totalFiles: 1,
       scannedFiles: 0,
@@ -80,7 +136,7 @@ export async function enqueueSbomScan(
     },
   });
 
-  // 2. Create AuditLog entry linking user to this scanJob for authorization and durability
+  // 4. Create AuditLog entry linking user to this scanJob for authorization, auditability, and deduplication
   if (data.userId) {
     await prisma.auditLog.create({
       data: sanitizeAuditLogInput({
@@ -91,12 +147,15 @@ export async function enqueueSbomScan(
           scanJobId: scanJob.id,
           fileName: data.fileName,
           repositoryId: data.repositoryId ?? null,
+          pullRequestId: data.pullRequestId ?? null,
+          dedupeKey: options.dedupeKey ?? null,
+          deliveryId: options.deliveryId ?? null,
         },
       }),
     });
   }
 
-  const jobId = options.jobId ?? `sbom-${scanJob.id}`;
+  const finalJobId = targetJobId ?? `sbom-${scanJob.id}`;
   const jobPayload: SbomJobData = {
     ...data,
     scanJobId: scanJob.id,
@@ -104,16 +163,22 @@ export async function enqueueSbomScan(
 
   // Mock DB support for CI / test environments without Redis
   if (process.env.NEXT_PUBLIC_MOCK_DB === "true") {
-    return { jobId, scanJobId: scanJob.id };
+    return { jobId: finalJobId, scanJobId: scanJob.id };
   }
 
   try {
-    await sbomQueue.add("process-sbom", jobPayload, {
-      jobId,
+    const added = await sbomQueue.add("process-sbom", jobPayload, {
+      jobId: finalJobId,
       priority: 1,
       attempts: 3,
       backoff: { type: "exponential", delay: 3000 },
     });
+
+    // Concurrency guard: if BullMQ returned an existing job with a different scanJobId, clean up our newly created orphaned scanJob
+    if (added && added.id === finalJobId && added.data?.scanJobId && added.data.scanJobId !== scanJob.id) {
+      await prisma.scanJob.delete({ where: { id: scanJob.id } }).catch(() => {});
+      return { jobId: finalJobId, scanJobId: added.data.scanJobId };
+    }
   } catch (err) {
     // If Redis enqueue fails, mark the ScanJob as FAILED so it does not stay PENDING forever
     await prisma.scanJob
@@ -129,7 +194,7 @@ export async function enqueueSbomScan(
     throw err;
   }
 
-  return { jobId, scanJobId: scanJob.id };
+  return { jobId: finalJobId, scanJobId: scanJob.id };
 }
 
 export interface SbomJobStatusInfo {
@@ -182,7 +247,10 @@ export async function getSbomJobStatus(scanJobId: string): Promise<SbomJobStatus
     if (!result) {
       try {
         const audit = await prisma.auditLog.findFirst({
-          where: { resource: scanJobId, action: "SBOM SCAN COMPLETED" },
+          where: {
+            resource: scanJobId,
+            action: { in: ["SBOM Scan Completed", "SBOM SCAN COMPLETED"] },
+          },
           select: { metadata: true },
         });
         if (audit?.metadata && typeof audit.metadata === "object") {
@@ -190,6 +258,37 @@ export async function getSbomJobStatus(scanJobId: string): Promise<SbomJobStatus
           if (meta.result) {
             result = meta.result as SbomScanResult;
           }
+        }
+      } catch {
+        // Fallback read error ignored
+      }
+    }
+
+    // Fallback to durable ScanResult if linked to a pullRequest
+    if (!result && job.pullRequestId) {
+      try {
+        const scanResult = await prisma.scanResult.findFirst({
+          where: { pullRequestId: job.pullRequestId },
+          orderBy: { createdAt: "desc" },
+          include: { findings: true },
+        });
+        if (scanResult) {
+          result = {
+            scanId: scanJobId,
+            timestamp: scanResult.createdAt,
+            totalDependencies: job.totalFiles,
+            vulnerabilities: scanResult.findings.map((f: any) => ({
+              dependency: {
+                name: f.codeSnippet?.split("@")[0]?.replace("Dependency: ", "") || "unknown",
+                version: f.codeSnippet?.split("@")[1]?.split("\n")[0] || "unknown",
+              },
+              cveId: f.explanation?.match(/CVE-[A-Za-z0-9-]+/)?.[0] || "CVE-UNKNOWN",
+              severity: f.severity as any,
+              description: f.explanation || "",
+              patchedVersion: f.remediation?.replace(/Update .* to version | or higher\./g, "") || "",
+            })),
+            status: scanResult.policyDecision === "BLOCK" ? "VULNERABLE" : "CLEAN",
+          };
         }
       } catch {
         // Fallback read error ignored

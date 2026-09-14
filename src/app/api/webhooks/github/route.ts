@@ -65,7 +65,10 @@ async function fetchFileContent(
 /**
  * Executes routines when an existing Pull Request receives new code commits
  */
-export async function handlePullRequestSynchronize(payload: Record<string, unknown> | any) {
+export async function handlePullRequestSynchronize(
+  payload: Record<string, unknown> | any,
+  deliveryId?: string,
+) {
   const prNumber = payload.number;
   const repoName = payload.repository?.full_name;
   const headSha = payload.pull_request?.head?.sha;
@@ -83,30 +86,34 @@ export async function handlePullRequestSynchronize(payload: Record<string, unkno
   }
 
   try {
-    // 1. Save/Update PR Record
-    const prRecord = await prisma.pullRequest.upsert({
-      where: { githubPrId: pull_request.id.toString() },
+    // 1. Resolve SecureFlow Repository
+    const dbRepo = await prisma.repository.findUnique({
+      where: { githubId: BigInt(repository.id) },
+    });
+
+    if (!dbRepo || !dbRepo.userId) {
+      console.warn(
+        `[PR_SYNC] Repository ${repository.full_name} (${repository.id}) not found or unowned in SecureFlow database. Skipping SBOM scan.`,
+      );
+      return;
+    }
+
+    // 2. Resolve or upsert PR Record using valid schema fields
+    const dbPr = await prisma.pullRequest.upsert({
+      where: { githubId: BigInt(pull_request.id) },
       update: {
-        title: pull_request.title,
-        state: pull_request.state,
-        updatedAt: new Date(),
+        title: pull_request.title || `PR #${pull_request.number}`,
+        state: pull_request.state === "closed" ? "CLOSED" : "OPEN",
       },
       create: {
-        githubPrId: pull_request.id.toString(),
-        title: pull_request.title,
-        state: pull_request.state,
-        branch: pull_request.head.ref,
-        repositoryId: repository.id.toString(),
-        repository: {
-          connectOrCreate: {
-            where: { githubRepoId: repository.id.toString() },
-            create: {
-              githubRepoId: repository.id.toString(),
-              name: repository.full_name,
-              owner: repository.owner.login,
-            },
-          },
-        },
+        githubId: BigInt(pull_request.id),
+        prNumber: pull_request.number,
+        title: pull_request.title || `PR #${pull_request.number}`,
+        state: pull_request.state === "closed" ? "CLOSED" : "OPEN",
+        status: "REVIEW_REQUIRED",
+        authorLogin: pull_request.user?.login || null,
+        authorAvatarUrl: pull_request.user?.avatar_url || null,
+        repositoryId: dbRepo.id,
       },
     });
 
@@ -114,18 +121,14 @@ export async function handlePullRequestSynchronize(payload: Record<string, unkno
     const owner = repository.owner.login;
     const repo = repository.name;
 
-    // 2. Get changed files
-    // Added .rest namespace
+    // 3. Get changed files
     const { data: files } = await octokit.rest.pulls.listFiles({
       owner,
       repo,
       pull_number: pull_request.number,
     });
 
-    // 3. Standard AI Scan (Existing Logic)
-    // ... [Assume existing AI scan logic runs here for code files] ...
-
-    // 4. [NEW] SBOM Dependency Scan Integration
+    // 4. SBOM Dependency Scan Integration
     console.log(`[SBOM] Checking ${files.length} files for manifests...`);
 
     for (const file of files) {
@@ -143,12 +146,25 @@ export async function handlePullRequestSynchronize(payload: Record<string, unkno
         );
 
         if (content) {
+          // Derive deterministic deduplication key based on repo + PR + commit + filename
+          const dedupeKey = `webhook:${dbRepo.id}:${dbPr.id}:${headSha || "head"}:${file.filename}`;
+          const jobId = `sbom:${dbRepo.id}-${dbPr.id}-${headSha || "head"}-${file.filename.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+
           // Offload SBOM dependency scan to background queue (#809)
-          await enqueueSbomScan({
-            fileName: file.filename,
-            content,
-            userId: "",
-          });
+          await enqueueSbomScan(
+            {
+              fileName: file.filename,
+              content,
+              userId: dbRepo.userId,
+              repositoryId: dbRepo.id,
+              pullRequestId: dbPr.id,
+            },
+            {
+              jobId,
+              dedupeKey,
+              deliveryId,
+            },
+          );
           console.log(`[SBOM] Enqueued asynchronous SBOM scan for manifest: ${file.filename}`);
         }
       }
@@ -250,7 +266,7 @@ const handler = withErrorHandler(async function POST(req: NextRequest) {
 
   // Route event actions
   if (event === "pull_request" && parsed.payload.action === "synchronize") {
-    await handlePullRequestSynchronize(parsed.payload);
+    await handlePullRequestSynchronize(parsed.payload, deliveryId);
   } else if (event === "branch_protection_rule") {
     await handleBranchProtectionMutation(parsed.payload);
   }

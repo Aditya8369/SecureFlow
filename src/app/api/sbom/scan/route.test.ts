@@ -1,11 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { authMock, enqueueSbomScanMock } = vi.hoisted(() => ({
+const { authMock, enqueueSbomScanMock, mockPrisma } = vi.hoisted(() => ({
   authMock: vi.fn(),
   enqueueSbomScanMock: vi.fn(),
+  mockPrisma: {
+    repository: {
+      findFirst: vi.fn(),
+    },
+  },
 }));
 
 vi.mock("@/auth", () => ({ auth: authMock }));
+
+vi.mock("@/lib/prisma", () => ({ default: mockPrisma }));
 
 vi.mock("@/lib/queue/sbomQueue", () => ({
   enqueueSbomScan: enqueueSbomScanMock,
@@ -43,14 +50,30 @@ vi.mock("@/lib/middleware/rate-limit", () => ({
   withRateLimit: <T>(handler: T): T => handler,
 }));
 
-import { POST } from "./route";
+import { POST, MAX_REQUEST_BYTES } from "./route";
 
-function makePostRequest(body: unknown) {
-  return new Request("http://localhost/api/sbom/scan", {
+function makePostRequest(
+  body: unknown,
+  headerOverrides: Record<string, string | null> = {},
+) {
+  const serialized = typeof body === "string" ? body : JSON.stringify(body);
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+  };
+
+  for (const [key, val] of Object.entries(headerOverrides)) {
+    if (val !== null) {
+      headers[key] = val;
+    }
+  }
+
+  const req = new Request("http://localhost/api/sbom/scan", {
     method: "POST",
-    headers: { "content-type": "application/json" },
-    body: typeof body === "string" ? body : JSON.stringify(body),
-  }) as any;
+    headers,
+    body: serialized,
+  });
+
+  return req as any;
 }
 
 describe("POST /api/sbom/scan", () => {
@@ -61,6 +84,7 @@ describe("POST /api/sbom/scan", () => {
       jobId: "sbom-sj-123",
       scanJobId: "sj-123",
     });
+    mockPrisma.repository.findFirst.mockResolvedValue({ id: "repo-xyz" });
   });
 
   it("returns 401 Unauthorized when session is missing", async () => {
@@ -112,47 +136,126 @@ describe("POST /api/sbom/scan", () => {
     expect(enqueueSbomScanMock).not.toHaveBeenCalled();
   });
 
-  it("returns 413 Payload Too Large when manifest exceeds 1MB", async () => {
-    const oversized = "a".repeat(1024 * 1024 + 50);
-    const req = makePostRequest({
-      fileName: "package.json",
-      content: oversized,
-    });
-    const res = await POST(req);
+  describe("bounded request ingestion (Finding 4)", () => {
+    it("returns 413 when Content-Length header is oversized before reading body", async () => {
+      const req = makePostRequest(
+        { fileName: "package.json", content: "{}" },
+        { "content-length": String(MAX_REQUEST_BYTES + 5000) },
+      );
+      const res = await POST(req);
 
-    expect(res.status).toBe(413);
-    expect(await res.json()).toMatchObject({
-      error: expect.stringContaining("exceeds maximum allowed size"),
+      expect(res.status).toBe(413);
+      expect(await res.json()).toMatchObject({
+        error: expect.stringContaining("exceeds maximum allowed size"),
+      });
+      expect(enqueueSbomScanMock).not.toHaveBeenCalled();
     });
-    expect(enqueueSbomScanMock).not.toHaveBeenCalled();
+
+    it("returns 413 when body without Content-Length is oversized", async () => {
+      const hugeContent = "x".repeat(MAX_REQUEST_BYTES + 100);
+      const req = makePostRequest({
+        fileName: "package.json",
+        content: hugeContent,
+      });
+      const res = await POST(req);
+
+      expect(res.status).toBe(413);
+      expect(await res.json()).toMatchObject({
+        error: expect.stringContaining("exceeds maximum allowed size"),
+      });
+      expect(enqueueSbomScanMock).not.toHaveBeenCalled();
+    });
+
+    it("returns 413 when manifest content itself exceeds 1MB", async () => {
+      const oversized = "a".repeat(1024 * 1024 + 50);
+      const req = makePostRequest({
+        fileName: "package.json",
+        content: oversized,
+      });
+      const res = await POST(req);
+
+      expect(res.status).toBe(413);
+      expect(await res.json()).toMatchObject({
+        error: expect.stringContaining("exceeds maximum allowed size"),
+      });
+      expect(enqueueSbomScanMock).not.toHaveBeenCalled();
+    });
   });
 
-  it("enqueues scan job and returns 202 Accepted with job handles", async () => {
-    const req = makePostRequest({
-      fileName: "package.json",
-      content: JSON.stringify({ dependencies: { express: "4.18.2" } }),
-      repositoryId: "repo-xyz",
+  describe("repository ownership verification (Finding 5)", () => {
+    it("succeeds with 202 when user owns the requested repository", async () => {
+      mockPrisma.repository.findFirst.mockResolvedValue({ id: "repo-owned" });
+
+      const req = makePostRequest({
+        fileName: "package.json",
+        content: JSON.stringify({ dependencies: { express: "4.18.2" } }),
+        repositoryId: "repo-owned",
+      });
+
+      const res = await POST(req);
+
+      expect(res.status).toBe(202);
+      expect(mockPrisma.repository.findFirst).toHaveBeenCalledWith({
+        where: { id: "repo-owned", userId: "user-test" },
+        select: { id: true },
+      });
+      expect(enqueueSbomScanMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          repositoryId: "repo-owned",
+          userId: "user-test",
+        }),
+      );
     });
 
-    const res = await POST(req);
+    it("returns 404 when repository belongs to another user", async () => {
+      // Not found for (id: repo-foreign, userId: user-test)
+      mockPrisma.repository.findFirst.mockResolvedValue(null);
 
-    expect(res.status).toBe(202);
-    expect(res.headers.get("Cache-Control")).toBe("no-store");
+      const req = makePostRequest({
+        fileName: "package.json",
+        content: JSON.stringify({ dependencies: { express: "4.18.2" } }),
+        repositoryId: "repo-foreign",
+      });
 
-    const body = await res.json();
-    expect(body).toEqual({
-      status: "queued",
-      jobId: "sbom-sj-123",
-      scanJobId: "sj-123",
-      message: "SBOM scan job enqueued successfully",
-      pollingUrl: "/api/sbom/scan/status/sj-123",
+      const res = await POST(req);
+
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ error: "Repository not found" });
+      expect(enqueueSbomScanMock).not.toHaveBeenCalled();
     });
 
-    expect(enqueueSbomScanMock).toHaveBeenCalledWith({
-      fileName: "package.json",
-      content: JSON.stringify({ dependencies: { express: "4.18.2" } }),
-      userId: "user-test",
-      repositoryId: "repo-xyz",
+    it("returns 404 when repository does not exist", async () => {
+      mockPrisma.repository.findFirst.mockResolvedValue(null);
+
+      const req = makePostRequest({
+        fileName: "package.json",
+        content: JSON.stringify({ dependencies: { express: "4.18.2" } }),
+        repositoryId: "nonexistent-repo",
+      });
+
+      const res = await POST(req);
+
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ error: "Repository not found" });
+      expect(enqueueSbomScanMock).not.toHaveBeenCalled();
+    });
+
+    it("succeeds with 202 and leaves repositoryId undefined when omitted", async () => {
+      const req = makePostRequest({
+        fileName: "package.json",
+        content: JSON.stringify({ dependencies: { express: "4.18.2" } }),
+      });
+
+      const res = await POST(req);
+
+      expect(res.status).toBe(202);
+      expect(mockPrisma.repository.findFirst).not.toHaveBeenCalled();
+      expect(enqueueSbomScanMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          repositoryId: undefined,
+          userId: "user-test",
+        }),
+      );
     });
   });
 });

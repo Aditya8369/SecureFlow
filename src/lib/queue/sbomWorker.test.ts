@@ -5,10 +5,17 @@ const { mockPrisma, mockRedis, mockDLQInstance } = vi.hoisted(() => {
     scanJob: {
       findUnique: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
+    },
+    scanResult: {
+      create: vi.fn(),
+      findFirst: vi.fn(),
     },
     auditLog: {
       create: vi.fn(),
+      findFirst: vi.fn(),
     },
+    $transaction: vi.fn(),
   };
 
   const mockRedis = {
@@ -61,10 +68,13 @@ import { UnrecoverableError } from "bullmq";
 describe("sbomWorker", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPrisma.scanJob.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.$transaction.mockImplementation(async (cb: (tx: typeof mockPrisma) => Promise<unknown>) => cb(mockPrisma));
+    mockPrisma.scanResult.create.mockResolvedValue({ id: "sr-1" });
   });
 
-  it("processes a valid package.json with vulnerabilities successfully", async () => {
-    mockPrisma.scanJob.findUnique.mockResolvedValue({ id: "sj-1", status: "PENDING" });
+  it("processes a valid package.json with vulnerabilities successfully and persists ScanResult + Findings", async () => {
+    mockPrisma.scanJob.findUnique.mockResolvedValue({ id: "sj-1", status: "PENDING", pullRequestId: "pr-1" });
     mockPrisma.scanJob.update.mockResolvedValue({});
     mockPrisma.auditLog.create.mockResolvedValue({});
 
@@ -81,6 +91,7 @@ describe("sbomWorker", () => {
         }),
         userId: "user-1",
         repositoryId: "repo-1",
+        pullRequestId: "pr-1",
       },
       opts: { attempts: 3 },
       attemptsMade: 0,
@@ -93,11 +104,32 @@ describe("sbomWorker", () => {
     expect(result.vulnerabilities.length).toBeGreaterThan(0);
     expect(result.status).toBe("VULNERABLE");
 
-    // Marked PROCESSING first
-    expect(mockPrisma.scanJob.update).toHaveBeenCalledWith(
+    // Concurrency-safe transition to PROCESSING
+    expect(mockPrisma.scanJob.updateMany).toHaveBeenCalledWith({
+      where: { id: "sj-1", status: "PENDING" },
+      data: expect.objectContaining({ status: "PROCESSING" }),
+    });
+
+    // Transaction executed
+    expect(mockPrisma.$transaction).toHaveBeenCalledOnce();
+
+    // Persisted ScanResult with nested Findings
+    expect(mockPrisma.scanResult.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "sj-1" },
-        data: expect.objectContaining({ status: "PROCESSING" }),
+        data: expect.objectContaining({
+          pullRequestId: "pr-1",
+          policyDecision: "BLOCK",
+          findings: {
+            create: expect.arrayContaining([
+              expect.objectContaining({
+                type: "VULNERABILITY",
+                fileLocation: "package.json",
+                fingerprint: expect.any(String),
+                codeSnippet: expect.stringContaining("lodash"),
+              }),
+            ]),
+          },
+        }),
       }),
     );
 
@@ -121,6 +153,9 @@ describe("sbomWorker", () => {
           userId: "user-1",
           action: "SBOM SCAN COMPLETED",
           resource: "sj-1",
+          metadata: expect.objectContaining({
+            pullRequestId: "pr-1",
+          }),
         }),
       }),
     );
@@ -196,34 +231,225 @@ describe("sbomWorker", () => {
     );
   });
 
-  it("skips re-processing if ScanJob is already COMPLETED (idempotency)", async () => {
+  describe("durable idempotency & completed-state recovery (Finding 2)", () => {
     const cachedResult = {
-      scanId: "sj-already-done",
+      scanId: "sj-done-1",
+      timestamp: "2026-09-14T10:00:00.000Z",
       totalDependencies: 3,
       vulnerabilities: [],
-      status: "CLEAN",
+      status: "CLEAN" as const,
     };
 
-    mockPrisma.scanJob.findUnique.mockResolvedValue({
-      id: "sj-already-done",
-      status: "COMPLETED",
+    it("1. COMPLETED + Redis hit returns cached result without reprocessing", async () => {
+      mockPrisma.scanJob.findUnique.mockResolvedValue({
+        id: "sj-done-1",
+        status: "COMPLETED",
+      });
+      mockRedis.get.mockResolvedValue(JSON.stringify(cachedResult));
+
+      const job = {
+        id: "job-redis-hit",
+        data: {
+          scanJobId: "sj-done-1",
+          fileName: "package.json",
+          content: "{}",
+          userId: "user-1",
+        },
+        opts: { attempts: 3 },
+        attemptsMade: 1,
+      } as any;
+
+      const result = await processSbomJob(job);
+      expect(result).toEqual(cachedResult);
+      expect(mockPrisma.scanJob.updateMany).not.toHaveBeenCalled();
+      expect(mockPrisma.scanJob.update).not.toHaveBeenCalled();
+      expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
     });
-    mockRedis.get.mockResolvedValue(JSON.stringify(cachedResult));
 
-    const job = {
-      id: "job-repeat",
-      data: {
-        scanJobId: "sj-already-done",
-        fileName: "package.json",
-        content: "{}",
-        userId: "user-1",
-      },
-      opts: { attempts: 3 },
-      attemptsMade: 1,
-    } as any;
+    it("2. COMPLETED + Redis miss recovers from PostgreSQL AuditLog without reprocessing", async () => {
+      mockPrisma.scanJob.findUnique.mockResolvedValue({
+        id: "sj-done-2",
+        status: "COMPLETED",
+      });
+      mockRedis.get.mockResolvedValue(null);
+      mockPrisma.auditLog.findFirst.mockResolvedValue({
+        metadata: { result: cachedResult },
+      });
 
-    const result = await processSbomJob(job);
-    expect(result).toEqual(cachedResult);
-    expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
+      const job = {
+        id: "job-redis-miss",
+        data: {
+          scanJobId: "sj-done-2",
+          fileName: "package.json",
+          content: "{}",
+          userId: "user-1",
+        },
+        opts: { attempts: 3 },
+        attemptsMade: 1,
+      } as any;
+
+      const result = await processSbomJob(job);
+      expect(result).toEqual(cachedResult);
+      expect(mockPrisma.auditLog.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ resource: "sj-done-2" }),
+        }),
+      );
+      expect(mockPrisma.scanJob.updateMany).not.toHaveBeenCalled();
+      expect(mockPrisma.scanJob.update).not.toHaveBeenCalled();
+      expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it("3. COMPLETED + Redis unavailable recovers from PostgreSQL without reprocessing", async () => {
+      mockPrisma.scanJob.findUnique.mockResolvedValue({
+        id: "sj-done-3",
+        status: "COMPLETED",
+      });
+      mockRedis.get.mockRejectedValue(new Error("Redis connection timed out"));
+      mockPrisma.auditLog.findFirst.mockResolvedValue({
+        metadata: { result: cachedResult },
+      });
+
+      const job = {
+        id: "job-redis-err",
+        data: {
+          scanJobId: "sj-done-3",
+          fileName: "package.json",
+          content: "{}",
+          userId: "user-1",
+        },
+        opts: { attempts: 3 },
+        attemptsMade: 1,
+      } as any;
+
+      const result = await processSbomJob(job);
+      expect(result).toEqual(cachedResult);
+      expect(mockPrisma.scanJob.updateMany).not.toHaveBeenCalled();
+      expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it("4. COMPLETED recovers from ScanResult when AuditLog has no metadata", async () => {
+      mockPrisma.scanJob.findUnique.mockResolvedValue({
+        id: "sj-done-4",
+        status: "COMPLETED",
+        pullRequestId: "pr-4",
+      });
+      mockRedis.get.mockResolvedValue(null);
+      mockPrisma.auditLog.findFirst.mockResolvedValue(null);
+      mockPrisma.scanResult.findFirst.mockResolvedValue({
+        id: "sr-4",
+        pullRequestId: "pr-4",
+        policyDecision: "BLOCK",
+        createdAt: new Date("2026-09-14T12:00:00Z"),
+        findings: [
+          {
+            id: "f-1",
+            severity: "HIGH",
+            codeSnippet: "Dependency: lodash@4.17.20\nPatched: 4.17.21",
+            explanation: "Detected known vulnerability CVE-MOCK-1234 in lodash.",
+            remediation: "Update lodash to version 4.17.21 or higher.",
+          },
+        ],
+      });
+
+      const job = {
+        id: "job-scanresult-recovery",
+        data: {
+          scanJobId: "sj-done-4",
+          fileName: "package.json",
+          content: "{}",
+          userId: "user-1",
+          pullRequestId: "pr-4",
+        },
+        opts: { attempts: 3 },
+        attemptsMade: 1,
+      } as any;
+
+      const result = await processSbomJob(job);
+      expect(result.scanId).toBe("sj-done-4");
+      expect(result.status).toBe("VULNERABLE");
+      expect(result.vulnerabilities.length).toBe(1);
+      expect(mockPrisma.scanJob.updateMany).not.toHaveBeenCalled();
+      expect(mockPrisma.scanJob.update).not.toHaveBeenCalled();
+      expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it("5. throws UnrecoverableError when COMPLETED result cannot be recovered from any store", async () => {
+      mockPrisma.scanJob.findUnique.mockResolvedValue({
+        id: "sj-unrecoverable",
+        status: "COMPLETED",
+        pullRequestId: null,
+      });
+      mockRedis.get.mockResolvedValue(null);
+      mockPrisma.auditLog.findFirst.mockResolvedValue(null);
+
+      const job = {
+        id: "job-unrecoverable",
+        data: {
+          scanJobId: "sj-unrecoverable",
+          fileName: "package.json",
+          content: "{}",
+          userId: "user-1",
+        },
+        opts: { attempts: 3 },
+        attemptsMade: 1,
+      } as any;
+
+      await expect(processSbomJob(job)).rejects.toThrow(UnrecoverableError);
+      expect(mockPrisma.scanJob.updateMany).not.toHaveBeenCalled();
+      expect(mockPrisma.scanJob.update).not.toHaveBeenCalled();
+    });
+
+    it("6. handles duplicate worker delivery gracefully when another worker already PROCESSING", async () => {
+      mockPrisma.scanJob.findUnique
+        .mockResolvedValueOnce({ id: "sj-racing", status: "PENDING" })
+        .mockResolvedValueOnce({ id: "sj-racing", status: "PROCESSING" });
+      mockPrisma.scanJob.updateMany.mockResolvedValue({ count: 0 }); // updateMany claimed by another worker
+
+      const job = {
+        id: "job-duplicate-delivery",
+        data: {
+          scanJobId: "sj-racing",
+          fileName: "package.json",
+          content: "{}",
+          userId: "user-1",
+        },
+        opts: { attempts: 3 },
+        attemptsMade: 0,
+      } as any;
+
+      const result = await processSbomJob(job);
+      expect(result.scanId).toBe("sj-racing");
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+      expect(mockPrisma.auditLog.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("transaction failure safety (Finding 3)", () => {
+    it("does not mark ScanJob COMPLETED if transaction fails", async () => {
+      mockPrisma.scanJob.findUnique.mockResolvedValue({ id: "sj-tx-fail", status: "PENDING" });
+      mockPrisma.$transaction.mockRejectedValue(new Error("Database write collision"));
+
+      const job = {
+        id: "job-tx-fail",
+        data: {
+          scanJobId: "sj-tx-fail",
+          fileName: "package.json",
+          content: JSON.stringify({ dependencies: { express: "4.18.2" } }),
+          userId: "user-1",
+          pullRequestId: "pr-fail",
+        },
+        opts: { attempts: 3 },
+        attemptsMade: 0,
+      } as any;
+
+      await expect(processSbomJob(job)).rejects.toThrow("Database write collision");
+      // Outside transaction, scanJob was only marked PROCESSING, never COMPLETED
+      expect(mockPrisma.scanJob.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: "COMPLETED" }),
+        }),
+      );
+    });
   });
 });

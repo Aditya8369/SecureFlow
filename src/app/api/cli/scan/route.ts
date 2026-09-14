@@ -1,43 +1,45 @@
 /**
  * POST /api/cli/scan — AI-powered scan for the SecureFlow CLI.
  *
- * Auth: a single shared secret (`SECUREFLOW_API_KEY`), checked with
- * `crypto.timingSafeEqual` — the same style already used for
- * `GITHUB_WEBHOOK_SECRET` on the GitHub webhook route. This is
- * intentionally NOT per-user API keys (no such infrastructure exists
- * in this repo yet — see docs/api.md); that's tracked as a follow-up.
+ * Calls the same ArmorIQScanner the GitHub App webhook uses
+ * (src/lib/armor/scanner.ts), so the CLI's AI scan and the App's PR scan
+ * share one implementation. The CLI sends full staged-file content, not
+ * a diff, so each file is wrapped in a synthetic "every line added"
+ * unified patch before being handed to the scanner — matching the exact
+ * format `parseUnifiedPatch` (src/lib/armor/diff.ts) expects.
+ *
+ * Auth: none beyond the existing IP-based rate limiting. A single
+ * shared secret can't do per-user attribution or revocation since it
+ * has to be handed to every legitimate CLI user anyway (see PR
+ * discussion); real per-user API keys are tracked as a follow-up.
  */
 
-import { timingSafeEqual } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { withErrorHandler, AppError } from "@/lib/middleware/error-handler";
 import { withRateLimit } from "@/lib/middleware/rate-limit";
+import { scanner, type FileChange } from "@/lib/armor/scanner";
 
 interface CliScanFile {
   path: string;
   content: string;
 }
 
-function isAuthorized(req: NextRequest): boolean {
-  const secret = process.env.SECUREFLOW_API_KEY;
-  if (!secret) return false;
-
-  const authHeader = req.headers.get("authorization");
-  const provided = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
-  if (!provided) return false;
-
-  const expected = Buffer.from(secret);
-  const actual = Buffer.from(provided);
-  if (expected.length !== actual.length) return false;
-
-  return timingSafeEqual(expected, actual);
+/**
+ * Wraps full file content as a unified diff whose every line is "added",
+ * in the exact shape `parseUnifiedPatch` (src/lib/armor/diff.ts) parses:
+ * a single `@@ -0,0 +1,N @@` hunk followed by N `+`-prefixed lines. The
+ * CLI has no prior commit to diff a staged, uncommitted file against —
+ * scanning "everything currently staged" is the same scope as a
+ * from-scratch PR that adds the file.
+ */
+function toSyntheticAddedPatch(content: string): string {
+  const lines = content.split("\n");
+  const header = `@@ -0,0 +1,${lines.length} @@`;
+  const body = lines.map((line) => `+${line}`).join("\n");
+  return `${header}\n${body}\n`;
 }
 
 const handler = withErrorHandler(async function POST(req: NextRequest) {
-  if (!isAuthorized(req)) {
-    throw new AppError("Unauthorized", 401);
-  }
-
   let body: unknown;
   try {
     body = await req.json();
@@ -50,8 +52,16 @@ const handler = withErrorHandler(async function POST(req: NextRequest) {
     throw new AppError('"files" must be a non-empty array', 400);
   }
 
-  // TODO: replace with the real AI scan call.
-  const findings = await runAiScan(files);
+  const fileChanges: FileChange[] = files.map((f) => ({
+    filename: f.path,
+    patch: toSyntheticAddedPatch(f.content),
+  }));
+
+  // No custom policies from the CLI today, so the scanner narrows itself
+  // to its default secret-detection rules (see scanner.ts's
+  // policyInstructions branch) -- the same scope as the CLI's own local
+  // scanFile() check, just AI-powered on top of it.
+  const findings = await scanner.scanPullRequest(fileChanges);
 
   return NextResponse.json({ findings }, { headers: { "Cache-Control": "no-store" } });
 });
@@ -63,8 +73,3 @@ export const POST = withRateLimit(handler, {
 });
 
 export const dynamic = "force-dynamic";
-
-// TODO: wire to the shared scan pipeline instead of stubbing.
-async function runAiScan(files: CliScanFile[]): Promise<unknown[]> {
-  throw new Error("runAiScan is not implemented yet");
-}

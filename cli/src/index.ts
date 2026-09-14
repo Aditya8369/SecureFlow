@@ -48,38 +48,27 @@ function reportViolations(result: FileScanResult): void {
 
 function reportAiFinding(finding: AiFinding): void {
   console.error(
-    `🤖 [SecureFlow AI] ${finding.severity} ${finding.type} in ${finding.path}${
-      finding.line ? `:${finding.line}` : ""
+    `🤖 [SecureFlow AI] ${finding.severity} ${finding.type} in ${finding.fileLocation}${
+      finding.lineStart ? `:${finding.lineStart}` : ""
     }`,
   );
   console.error(`  -> ${finding.description}`);
-  for (const step of finding.remediation) {
-    console.error(`  fix: ${step}`);
-  }
 }
 
 /**
  * Best-effort AI-powered scan on top of the always-on local scan above.
  * Never throws and never delays the commit beyond its own short internal
- * timeout -- if the API key is missing or the network is down, this is a
- * silent (or --verbose-logged) no-op and the local scan result stands on
- * its own, unchanged.
+ * timeout -- if the network is down, this is a silent (or
+ * --verbose-logged) no-op and the local scan result stands on its own,
+ * unchanged.
  */
 async function runAiScanIfAvailable(
   stagedForAi: StagedFileForAiScan[],
 ): Promise<AiFinding[]> {
   if (NO_AI || stagedForAi.length === 0) return [];
 
-  const apiKey = process.env.SECUREFLOW_API_KEY;
-  if (!apiKey) {
-    if (VERBOSE) {
-      console.log("  ↷ AI scan skipped (no SECUREFLOW_API_KEY set)");
-    }
-    return [];
-  }
-
   try {
-    return await requestAiFileScan(stagedForAi, apiKey);
+    return await requestAiFileScan(stagedForAi);
   } catch (err) {
     if (err instanceof NetworkUnavailableError) {
       if (VERBOSE) {

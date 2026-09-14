@@ -16,11 +16,6 @@ import {
 import prisma from "@/lib/prisma";
 import { Octokit } from "octokit";
 import { enqueueSbomScan } from "@/lib/queue/sbomQueue";
-} from '@/lib/github/webhook-verification';
-import prisma from '@/lib/prisma';
-import { Octokit } from 'octokit';
-import { parseManifestFile } from '@/lib/sbom/dependency-parser';
-import { matchVulnerabilities } from '@/lib/sbom/vulnerability-matcher';
 import { env } from "@/lib/env";
 
 /**
@@ -202,6 +197,17 @@ const handler = withErrorHandler(async function POST(req: NextRequest) {
     throw new AppError("Webhook payload exceeds the configured size limit", 413);
   }
   const webhookSecret = env.GITHUB_WEBHOOK_SECRET;
+
+  // 1a. Secret presence — a deployment fault, not a caller fault.
+  //
+  // Must be checked before the signature so that a misconfigured deployment
+  // returns 500 (server error) rather than 401 (auth error). An empty or
+  // whitespace-only secret means the HMAC check can never pass, and surfacing
+  // that as a 401 would mislead operators into thinking the caller sent a bad
+  // signature when the real problem is the server's own configuration.
+  if (!webhookSecret || !webhookSecret.trim()) {
+    throw new AppError("GITHUB_WEBHOOK_SECRET is not configured", 500);
+  }
 
   // 2. Delivery ID, required.
   //

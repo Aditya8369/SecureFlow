@@ -70,20 +70,22 @@ async function handler(request: NextRequest, { params }: { params: Promise<{ id:
 
   const { id } = await params;
 
-  // FIX: First, check if the finding exists at all to prevent BOLA/IDOR masking
-  const existingFinding = await prisma.finding.findUnique({
-    where: { id },
-  });
-
-  if (!existingFinding) {
-    return NextResponse.json({ error: "Finding not found" }, { status: 404 });
-  }
-
-  // Next, verify that the authenticated user actually owns this finding
+  // Combined query: check existence and ownership in a single database call
   const finding = await prisma.finding.findFirst({
     where: {
       id,
       scanResult: { pullRequest: { repository: { userId } } },
+    },
+    select: {
+      id: true,
+      type: true,
+      severity: true,
+      file: true,
+      description: true,
+      codeSnippet: true,
+      remediation: true,
+      line: true,
+      aiExplanation: true,
     },
   });
 

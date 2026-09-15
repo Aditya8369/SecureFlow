@@ -23,7 +23,12 @@ const handler = async function POST(
     const findingId = id;
     const finding = await prisma.finding.findUnique({
       where: { id: findingId },
-      include: { repository: true },
+      select: {
+        id: true,
+        codeSnippet: true,
+        description: true,
+        filePath: true,
+      },
     });
 
     if (!finding) {

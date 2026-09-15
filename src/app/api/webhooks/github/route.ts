@@ -12,11 +12,11 @@ import {
   payloadByteLength,
   verifySignature,
   webhookJobId,
-} from '@/lib/github/webhook-verification';
-import prisma from '@/lib/prisma';
-import { Octokit } from 'octokit';
-import { parseManifestFile } from '@/lib/sbom/dependency-parser';
-import { matchVulnerabilities } from '@/lib/sbom/vulnerability-matcher';
+} from "@/lib/github/webhook-verification";
+import prisma from "@/lib/prisma";
+import { Octokit } from "octokit";
+import { parseManifestFile } from "@/lib/sbom/dependency-parser";
+import { matchVulnerabilities } from "@/lib/sbom/vulnerability-matcher";
 import { env } from "@/lib/env";
 
 /**
@@ -187,9 +187,15 @@ export async function handleBranchProtectionMutation(payload: Record<string, unk
 }
 
 const handler = withErrorHandler(async function POST(req: NextRequest) {
+  // 1. Validate environment configuration first
+  const secret = process.env.GITHUB_WEBHOOK_SECRET?.trim();
+  if (!secret) {
+    throw new AppError("Server misconfiguration: GitHub webhook secret is missing.", 500);
+  }
+
   const maxBytes = parseMaxWebhookBytes(env.GITHUB_WEBHOOK_MAX_BYTES);
 
-  // 1. Size, from the header, before reading a single byte.
+  // 2. Size, from the header, before reading a single byte.
   //
   // `req.text()` buffers the whole body into memory. With a 50/minute rate limit
   // and no cap, one source could make the process buffer ~1.25 GB per minute of
@@ -198,9 +204,8 @@ const handler = withErrorHandler(async function POST(req: NextRequest) {
   if (isPayloadTooLarge(req.headers.get("content-length"), maxBytes)) {
     throw new AppError("Webhook payload exceeds the configured size limit", 413);
   }
-  const webhookSecret = env.GITHUB_WEBHOOK_SECRET;
 
-  // 2. Delivery ID, required.
+  // 3. Delivery ID, required.
   //
   // The worker guards its idempotency check on this value being truthy, so a
   // delivery without the header used to skip the duplicate check entirely — and
@@ -229,12 +234,12 @@ const handler = withErrorHandler(async function POST(req: NextRequest) {
     throw new AppError("Webhook payload exceeds the configured size limit", 413);
   }
 
-  // 3. Signature, before the body is interpreted in any way.
-  if (!verifySignature(rawPayloadText, webhookSecret, signatureHex)) {
+  // 4. Signature, before the body is interpreted in any way.
+  if (!verifySignature(rawPayloadText, secret, signatureHex)) {
     throw new AppError("Invalid GitHub webhook signature", 401);
   }
 
-  // 4. Parse.
+  // 5. Parse.
   //
   // This was a bare `JSON.parse` inline. A verified-but-malformed body threw a
   // SyntaxError with no `statusCode`, so the error handler fell through to 500 —
@@ -247,7 +252,7 @@ const handler = withErrorHandler(async function POST(req: NextRequest) {
 
   const event = req.headers.get("x-github-event");
 
-  // 5. Dispatch — now that the delivery is known to be genuine.
+  // 6. Dispatch — now that the delivery is known to be genuine.
   if (event === "ping") {
     // Answered only after verification, so a successful ping is real evidence
     // that the configured secret matches ours.
@@ -268,7 +273,7 @@ const handler = withErrorHandler(async function POST(req: NextRequest) {
     await handleBranchProtectionMutation(parsed.payload);
   }
 
-  // 6. Delegate to the queue.
+  // 7. Delegate to the queue.
   //
   // The job ID is derived from the delivery ID so BullMQ collapses a replayed
   // delivery before a worker picks it up, rather than leaving the worker's

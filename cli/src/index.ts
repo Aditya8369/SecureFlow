@@ -2,7 +2,12 @@
 import fs from "fs";
 import { GitError, getStagedFiles, readStagedContent } from "./git.js";
 import { scanFile, formatScanResults, type FileScanResult, type OutputFormat } from "./scanner.js";
-import { NetworkUnavailableError, requestAiFileScan, type AiFinding, type StagedFileForAiScan } from "./lib/api-client.js";
+import {
+  NetworkUnavailableError,
+  requestAiFileScan,
+  type AiFinding,
+  type StagedFileForAiScan,
+} from "./lib/api-client.js";
 
 const VERBOSE = process.argv.includes("--verbose");
 const NO_AI = process.argv.includes("--no-ai");
@@ -62,9 +67,7 @@ function reportAiFinding(finding: AiFinding): void {
  * --verbose-logged) no-op and the local scan result stands on its own,
  * unchanged.
  */
-async function runAiScanIfAvailable(
-  stagedForAi: StagedFileForAiScan[],
-): Promise<AiFinding[]> {
+async function runAiScanIfAvailable(stagedForAi: StagedFileForAiScan[]): Promise<AiFinding[]> {
   if (NO_AI || stagedForAi.length === 0) return [];
 
   try {

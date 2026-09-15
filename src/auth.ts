@@ -22,12 +22,14 @@ const nextAuthResult = NextAuth({
   adapter: {
     ...PrismaAdapter(prisma),
     createUser: async (user: any) => {
-      const githubLogin = user.githubLogin ?? null;
-      const { githubLogin: _drop, ...rest } = user;
       return prisma.user.create({
         data: {
-          ...rest,
-          githubLogin,
+          id: user.id,
+          name: user.name ?? null,
+          email: user.email ?? null,
+          emailVerified: user.emailVerified ?? null,
+          image: user.image ?? null,
+          githubLogin: user.githubLogin ?? null,
           codename: null,
           roles: {
             create: [
@@ -52,6 +54,16 @@ const nextAuthResult = NextAuth({
   },
   callbacks: {
     ...authConfig.callbacks,
+    async redirect({ url, baseUrl }: { url: string; baseUrl: string }) {
+      if (url.startsWith("/")) return `${baseUrl}${url}`;
+
+      try {
+        const target = new URL(url);
+        if (target.origin === new URL(baseUrl).origin) return url;
+      } catch {}
+
+      return `${baseUrl}/dashboard`;
+    },
     async jwt(params: any) {
       const { token, user, account, trigger } = params;
 
@@ -66,8 +78,7 @@ const nextAuthResult = NextAuth({
       const userId = (token.userId || user?.id || token.sub) as string | undefined;
       if (
         userId &&
-        ((!token.roles || token.roles.length === 0 || !token.codename) ||
-          trigger === "update")
+        (!token.roles || token.roles.length === 0 || !token.codename || trigger === "update")
       ) {
         const dbUser = await prisma.user.findUnique({
           where: { id: userId },

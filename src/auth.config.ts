@@ -98,7 +98,7 @@ export default {
 
       // ⭐ Check both session.user AND token before destructuring
       if (session?.user && token) {
-        session.user.id = token.userId || "";
+        session.user.id = token.userId || token.sub || "";
         (session.user as any).codename = token.codename || "";
         (session.user as any).roles = token.roles || [];
       }

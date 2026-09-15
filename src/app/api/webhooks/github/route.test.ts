@@ -3,6 +3,46 @@ import { createHmac } from "crypto";
 
 // ---- Mocks (factories must not reference outer variables — they are hoisted) ----
 
+const {
+  mockEnqueueSbomScan,
+  mockPrismaRepo,
+  mockPrismaPR,
+  mockOctokitListFiles,
+  mockOctokitGetContent,
+} = vi.hoisted(() => ({
+  mockEnqueueSbomScan: vi.fn(),
+  mockPrismaRepo: { findUnique: vi.fn() },
+  mockPrismaPR: { upsert: vi.fn() },
+  mockOctokitListFiles: vi.fn(),
+  mockOctokitGetContent: vi.fn(),
+}));
+
+vi.mock("@/lib/queue/sbomQueue", () => ({
+  enqueueSbomScan: mockEnqueueSbomScan,
+}));
+
+vi.mock("@/lib/prisma", () => ({
+  default: {
+    repository: mockPrismaRepo,
+    pullRequest: mockPrismaPR,
+  },
+}));
+
+vi.mock("octokit", () => {
+  return {
+    Octokit: class MockOctokit {
+      rest = {
+        pulls: {
+          listFiles: mockOctokitListFiles,
+        },
+        repos: {
+          getContent: mockOctokitGetContent,
+        },
+      };
+    },
+  };
+});
+
 vi.mock("@/lib/queue/webhookQueue", () => ({ addWebhookJob: vi.fn(async () => {}) }));
 
 vi.mock("@/lib/middleware/error-handler", () => {
@@ -37,7 +77,7 @@ vi.mock("@/lib/middleware/rateLimit", () => ({
 
 // ---- Imports (after mocks) ----
 
-import { POST } from "@/app/api/webhooks/github/route";
+import { POST, handlePullRequestSynchronize } from "@/app/api/webhooks/github/route";
 import { addWebhookJob } from "@/lib/queue/webhookQueue";
 
 // ---- Helpers ----
@@ -452,6 +492,131 @@ describe("GitHub webhook route", () => {
       const res = await POST(req);
       expect(res.status).toBe(500);
       expect(addWebhookJob).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("handlePullRequestSynchronize — Webhook Ownership & Deduplication (Finding 1 & 6)", () => {
+    const syncPayload = {
+      action: "synchronize",
+      number: 10,
+      pull_request: {
+        id: 999,
+        number: 10,
+        title: "Update deps",
+        state: "open",
+        head: { sha: "commit-sha-123", ref: "feature-branch" },
+        user: { login: "developer-alice", avatar_url: "https://example.com/alice.png" },
+      },
+      repository: {
+        id: 8888,
+        name: "test-app",
+        full_name: "acme/test-app",
+        owner: { login: "acme" },
+      },
+      installation: { id: 777 },
+    };
+
+    beforeEach(() => {
+      mockPrismaRepo.findUnique.mockResolvedValue({
+        id: "repo-uuid-1",
+        userId: "user-real-owner",
+        fullName: "acme/test-app",
+      });
+      mockPrismaPR.upsert.mockResolvedValue({
+        id: "pr-uuid-1",
+      });
+      mockOctokitListFiles.mockResolvedValue({
+        data: [{ filename: "package.json" }],
+      });
+      mockOctokitGetContent.mockResolvedValue({
+        data: {
+          content: Buffer.from(JSON.stringify({ dependencies: { lodash: "4.17.20" } })).toString("base64"),
+        },
+      });
+    });
+
+    it("resolves repository and PR ownership correctly, passing real userId, repositoryId, and pullRequestId", async () => {
+      await handlePullRequestSynchronize(syncPayload, "delivery-uuid-99");
+
+      expect(mockPrismaRepo.findUnique).toHaveBeenCalledWith({
+        where: { githubId: BigInt(8888) },
+      });
+
+      expect(mockPrismaPR.upsert).toHaveBeenCalledWith({
+        where: { githubId: BigInt(999) },
+        update: expect.objectContaining({
+          title: "Update deps",
+          state: "OPEN",
+        }),
+        create: expect.objectContaining({
+          githubId: BigInt(999),
+          prNumber: 10,
+          title: "Update deps",
+          state: "OPEN",
+          status: "REVIEW_REQUIRED",
+          authorLogin: "developer-alice",
+          authorAvatarUrl: "https://example.com/alice.png",
+          repositoryId: "repo-uuid-1",
+        }),
+      });
+
+      expect(mockEnqueueSbomScan).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fileName: "package.json",
+          userId: "user-real-owner",
+          repositoryId: "repo-uuid-1",
+          pullRequestId: "pr-uuid-1",
+        }),
+        expect.objectContaining({
+          dedupeKey: "webhook:repo-uuid-1:pr-uuid-1:commit-sha-123:package.json",
+          jobId: "sbom:repo-uuid-1-pr-uuid-1-commit-sha-123-package_json",
+          deliveryId: "delivery-uuid-99",
+        }),
+      );
+
+      // Verify no empty string or fake userId is sent
+      const callData = mockEnqueueSbomScan.mock.calls[0][0];
+      expect(callData.userId).not.toBe("");
+      expect(callData.userId).toBe("user-real-owner");
+    });
+
+    it("skips SBOM enqueue when repository cannot be resolved in SecureFlow database", async () => {
+      mockPrismaRepo.findUnique.mockResolvedValue(null);
+
+      await handlePullRequestSynchronize(syncPayload, "delivery-uuid-99");
+
+      expect(mockEnqueueSbomScan).not.toHaveBeenCalled();
+      expect(mockPrismaPR.upsert).not.toHaveBeenCalled();
+    });
+
+    it("skips SBOM enqueue when repository has no owner (empty userId)", async () => {
+      mockPrismaRepo.findUnique.mockResolvedValue({
+        id: "repo-uuid-orphan",
+        userId: "",
+      });
+
+      await handlePullRequestSynchronize(syncPayload, "delivery-uuid-99");
+
+      expect(mockEnqueueSbomScan).not.toHaveBeenCalled();
+    });
+
+    it("uses a stable logical dedupe key across redeliveries of the same PR commit", async () => {
+      await handlePullRequestSynchronize(syncPayload, "delivery-attempt-1");
+      await handlePullRequestSynchronize(syncPayload, "delivery-attempt-2");
+
+      expect(mockEnqueueSbomScan).toHaveBeenCalledTimes(2);
+
+      const firstOptions = mockEnqueueSbomScan.mock.calls[0][1];
+      const secondOptions = mockEnqueueSbomScan.mock.calls[1][1];
+
+      // Delivery IDs differ
+      expect(firstOptions.deliveryId).toBe("delivery-attempt-1");
+      expect(secondOptions.deliveryId).toBe("delivery-attempt-2");
+
+      // Stable logical dedupe keys and jobIds are identical
+      expect(firstOptions.dedupeKey).toBe(secondOptions.dedupeKey);
+      expect(firstOptions.jobId).toBe(secondOptions.jobId);
+      expect(firstOptions.dedupeKey).toBe("webhook:repo-uuid-1:pr-uuid-1:commit-sha-123:package.json");
     });
   });
 });

@@ -140,7 +140,6 @@ async function handler(request: NextRequest, { params }: { params: Promise<{ id:
     });
   }
 
-  const encoder = new TextEncoder();
   const { signal: abortSignal, release } = streamManager.register(request.signal, "explain-stream");
 
   let closed = false;

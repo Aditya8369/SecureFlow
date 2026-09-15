@@ -12,11 +12,11 @@ import {
   payloadByteLength,
   verifySignature,
   webhookJobId,
-} from '@/lib/github/webhook-verification';
-import prisma from '@/lib/prisma';
-import { Octokit } from 'octokit';
-import { parseManifestFile } from '@/lib/sbom/dependency-parser';
-import { matchVulnerabilities } from '@/lib/sbom/vulnerability-matcher';
+} from "@/lib/github/webhook-verification";
+import prisma from "@/lib/prisma";
+import { Octokit } from "octokit";
+import { parseManifestFile } from "@/lib/sbom/dependency-parser";
+import { matchVulnerabilities } from "@/lib/sbom/vulnerability-matcher";
 import { env } from "@/lib/env";
 
 /**
@@ -199,6 +199,9 @@ const handler = withErrorHandler(async function POST(req: NextRequest) {
     throw new AppError("Webhook payload exceeds the configured size limit", 413);
   }
   const webhookSecret = env.GITHUB_WEBHOOK_SECRET;
+  if (!webhookSecret || !webhookSecret.trim()) {
+    throw new AppError("GITHUB_WEBHOOK_SECRET is not set", 500);
+  }
 
   // 2. Delivery ID, required.
   //

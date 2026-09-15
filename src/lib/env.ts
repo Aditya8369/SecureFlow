@@ -52,9 +52,7 @@ const envSchema = z.object({
 
 export type Env = z.infer<typeof envSchema>;
 
-export function validateEnv(
-  source: Record<string, string | undefined> = process.env
-): Env {
+export function validateEnv(source: Record<string, string | undefined> = process.env): Env {
   const result = envSchema.safeParse(source);
 
   if (!result.success) {
@@ -68,9 +66,6 @@ export function validateEnv(
   return result.data;
 }
 
-const isTest =
-  process.env.NODE_ENV === "test" || process.env.VITEST === "true";
+const isTest = process.env.NODE_ENV === "test" || process.env.VITEST === "true";
 
-export const env = isTest
-  ? (process.env as unknown as Env)
-  : validateEnv();
+export const env = isTest ? (process.env as unknown as Env) : validateEnv();

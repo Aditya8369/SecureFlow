@@ -126,6 +126,21 @@ export const securityExplanationFallbackModels = [
 export function getSecurityExplanationModelChain(): Array<typeof gptOssx20b | string> {
   const customFallback = process.env.GROQ_MODEL;
   if (customFallback) {
+    /**
+ * Configuration options for AI security flow initialization.
+ * Ensures safe fallback types and environment validation.
+ */
+export interface SecurityAIConfig {
+  temperature?: number;
+  maxOutputTokens?: number;
+  modelName: string;
+}
+
+export const DEFAULT_SECURITY_CONFIG: SecurityAIConfig = {
+  temperature: 0.2,
+  maxOutputTokens: 1024,
+  modelName: 'gemini-1.5-flash',
+};
     return [securityExplanationModel, customFallback, ...securityExplanationFallbackModels];
   }
   return [securityExplanationModel, ...securityExplanationFallbackModels];

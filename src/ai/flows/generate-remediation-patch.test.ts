@@ -3,10 +3,8 @@ import { z } from "genkit";
 import { ai, securityExplanationModel } from "@/ai/genkit";
 
 // Use z.object() to create a standard Zod schema
-
 const PatchOutputSchema = z.object({
   patchDiff: z.string().describe("The unified diff patch to fix the vulnerability."),
-
   explanation: z.string().describe("Brief explanation of the changes made."),
 });
 

@@ -4,7 +4,6 @@ import { groq, gpt0ssx20b } from "genkitx-groq";
 
 /**
  * Configuration options for AI security flow initialization.
- * Pulls model name securely from environment variables with a safe fallback.
  */
 export interface SecurityAIConfig {
   temperature?: number;
@@ -31,13 +30,21 @@ export const availableGroqModels = [
   "groq/mixtral-8x7b-32768",
 ] as const;
 
+export const securityExplanationModel = gpt0ssx20b;
+
+export const securityExplanationFallbackModels = [
+  "groq/llama-3.3-70b-versatile",
+  "groq/llama-3.1-8b-instant",
+  "groq/mixtral-8x7b-32768",
+] as const;
+
 /**
  * Get ordered list of available models with fallback.
  */
-export function getAvailableModels() {
-  const customFallback = process.env.SECURITY_AI_FALLBACK;
+export function getSecurityExplanationModelChain(): Array<typeof gpt0ssx20b | string> {
+  const customFallback = process.env.GROQ_MODEL;
   if (customFallback) {
-    return [customFallback, ...availableGroqModels] as const;
+    return [customFallback, securityExplanationModel, ...securityExplanationFallbackModels];
   }
-  return availableGroqModels;
+  return [securityExplanationModel, ...securityExplanationFallbackModels];
 }

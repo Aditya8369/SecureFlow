@@ -9,7 +9,10 @@ import { generateRemediationPatchFlow } from "@/ai/flows/generate-remediation-pa
  * POST /api/findings/[id]/remediate
  * Triggers the AI flow to generate a remediation patch for a specific finding.
  */
-const handler = async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+const handler = async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
   try {
     const session = await auth();
     if (!session?.user?.id) {
@@ -20,7 +23,12 @@ const handler = async function POST(req: NextRequest, { params }: { params: Prom
     const findingId = id;
     const finding = await prisma.finding.findUnique({
       where: { id: findingId },
-      include: { repository: true },
+      select: {
+        id: true,
+        codeSnippet: true,
+        description: true,
+        filePath: true,
+      },
     });
 
     if (!finding) {
@@ -46,8 +54,9 @@ const handler = async function POST(req: NextRequest, { params }: { params: Prom
     console.error("[REMEDIATE_PATCH_ERROR]", error);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
-}
+};
 
-
-export const POST = withRateLimit(handler as (req: NextRequest, ...args: unknown[]) => Promise<NextResponse>, { ...TIERS.AI_STREAM, keyPrefix: "remediate:ip" }) as typeof handler;
-
+export const POST = withRateLimit(
+  handler as (req: NextRequest, ...args: unknown[]) => Promise<NextResponse>,
+  { ...TIERS.AI_STREAM, keyPrefix: "remediate:ip" },
+) as typeof handler;

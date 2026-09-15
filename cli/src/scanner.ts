@@ -8,6 +8,7 @@
  */
 
 import { formatSarifJson } from "./sarif.js";
+import { formatCsv, formatHtml } from "./exporters.js";
 
 /** One flagged call site. */
 export interface Violation {
@@ -329,10 +330,10 @@ export function scanFile(path: string, content: string): FileScanResult {
   return { path, violations: findSecretLogging(content) };
 }
 
-export type OutputFormat = "text" | "json" | "sarif";
+export type OutputFormat = "text" | "json" | "sarif" | "csv" | "html";
 
 /**
- * Format scan results based on the chosen output format ('text' | 'json' | 'sarif').
+ * Format scan results based on the chosen output format ('text' | 'json' | 'sarif' | 'csv' | 'html').
  */
 export function formatScanResults(
   results: FileScanResult[],
@@ -344,6 +345,14 @@ export function formatScanResults(
 
   if (format === "sarif") {
     return formatSarifJson(results);
+  }
+
+  if (format === "csv") {
+    return formatCsv(results);
+  }
+
+  if (format === "html") {
+    return formatHtml(results);
   }
 
   // Default text summary

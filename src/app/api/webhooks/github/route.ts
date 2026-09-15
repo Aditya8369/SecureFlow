@@ -202,6 +202,10 @@ const handler = withErrorHandler(async function POST(req: NextRequest) {
   if (isPayloadTooLarge(req.headers.get("content-length"), maxBytes)) {
     throw new AppError("Webhook payload exceeds the configured size limit", 413);
   }
+  const webhookSecret = env.GITHUB_WEBHOOK_SECRET;
+  if (!webhookSecret || !webhookSecret.trim()) {
+    throw new AppError("GITHUB_WEBHOOK_SECRET is not set", 500);
+  }
 
   // 3. Delivery ID, required.
   //

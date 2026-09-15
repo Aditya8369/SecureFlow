@@ -27,9 +27,7 @@ export function createExplanationCacheKey(input: {
   return `ai-explanation:${hash}`;
 }
 
-export async function getCachedExplanation(
-  key: string
-): Promise<CachedExplanation | null> {
+export async function getCachedExplanation(key: string): Promise<CachedExplanation | null> {
   if (!redis) return null;
 
   try {
@@ -44,10 +42,7 @@ export async function getCachedExplanation(
   }
 }
 
-export async function setCachedExplanation(
-  key: string,
-  result: CachedExplanation
-): Promise<void> {
+export async function setCachedExplanation(key: string, result: CachedExplanation): Promise<void> {
   if (!redis) return;
 
   try {

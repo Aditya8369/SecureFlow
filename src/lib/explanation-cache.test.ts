@@ -30,9 +30,7 @@ describe("explanation cache", () => {
       codeSnippet: "query(userInput)",
     };
 
-    expect(createExplanationCacheKey(input)).toBe(
-      createExplanationCacheKey(input)
-    );
+    expect(createExplanationCacheKey(input)).toBe(createExplanationCacheKey(input));
   });
 
   it("creates different keys when the code changes", () => {
@@ -48,9 +46,7 @@ describe("explanation cache", () => {
       codeSnippet: "query(sanitizedInput)",
     };
 
-    expect(createExplanationCacheKey(base)).not.toBe(
-      createExplanationCacheKey(changed)
-    );
+    expect(createExplanationCacheKey(base)).not.toBe(createExplanationCacheKey(changed));
   });
 
   it("returns a cached explanation on a cache hit", async () => {
@@ -89,7 +85,7 @@ describe("explanation cache", () => {
       "ai-explanation:test",
       JSON.stringify(result),
       "EX",
-      86400
+      86400,
     );
   });
 });

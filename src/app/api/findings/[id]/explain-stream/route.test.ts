@@ -36,6 +36,14 @@ vi.mock("@/lib/redis", () => ({
   redis: null,
 }));
 
+let mockCachedExplanation: Record<string, unknown> | null = null;
+
+vi.mock("@/lib/explanation-cache", () => ({
+  createExplanationCacheKey: vi.fn(() => "ai-explanation:test-key"),
+  getCachedExplanation: vi.fn(async () => mockCachedExplanation),
+  setCachedExplanation: vi.fn(async () => {}),
+}));
+
 const mockFinding = {
   id: "finding-1",
   type: "Vulnerability",
@@ -98,6 +106,7 @@ describe("GET /api/findings/[id]/explain-stream", () => {
     mockFindFirstResult = mockFinding;
     mockIpAllowed = true;
     mockUserAllowed = true;
+    mockCachedExplanation = null;
     mockEvents = [
       { type: "chunk", explanation: "Partial" },
       {
@@ -199,6 +208,43 @@ describe("GET /api/findings/[id]/explain-stream", () => {
     expect(checkRateLimit).toHaveBeenCalledWith("rate-limit:explain-stream:user:user-1", 10, 60, {
       fallbackStrategy: "fail-closed",
       timeoutMs: 1000,
+    });
+  });
+
+  describe("explanation cache", () => {
+    const cached = {
+      explanation: "Cached explanation.",
+      remediationSuggestions: "Cached fix.",
+      promptInjectionSuspected: false,
+    };
+
+    it("streams a cached explanation as SSE without regenerating it", async () => {
+      mockCachedExplanation = cached;
+      const { streamDeveloperSecurityExplanations } =
+        await import("@/ai/flows/security-explanation-stream");
+
+      const res = await GET({} as any, { params: Promise.resolve({ id: "finding-1" }) });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get("Content-Type")).toBe("text/event-stream");
+      expect(await readSSE(res)).toEqual([
+        { type: "chunk", explanation: "Cached explanation." },
+        { type: "done", result: cached },
+      ]);
+      expect(streamDeveloperSecurityExplanations).not.toHaveBeenCalled();
+    });
+
+    it("caches the generated result when there is no cached explanation", async () => {
+      const { setCachedExplanation } = await import("@/lib/explanation-cache");
+
+      const res = await GET({} as any, { params: Promise.resolve({ id: "finding-1" }) });
+      await readSSE(res);
+
+      expect(setCachedExplanation).toHaveBeenCalledWith("ai-explanation:test-key", {
+        explanation: "Full explanation.",
+        remediationSuggestions: "Fix it.",
+        promptInjectionSuspected: false,
+      });
     });
   });
 });

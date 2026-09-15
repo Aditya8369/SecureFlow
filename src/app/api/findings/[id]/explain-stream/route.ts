@@ -93,6 +93,10 @@ async function handler(request: NextRequest, { params }: { params: Promise<{ id:
       { status: 403 },
     );
   }
+
+  // Declared before the cache check: both the cached and the live stream encode SSE frames.
+  const encoder = new TextEncoder();
+
   const cacheKey = createExplanationCacheKey({
     findingType: finding.type,
     severity: finding.severity,

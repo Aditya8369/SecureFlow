@@ -31,6 +31,20 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("octokit", () => {
   return {
     Octokit: class MockOctokit {
+      // GitHub's page walk: request pages until one comes back short.
+      paginate = {
+        iterator: async function* (
+          route: (params: Record<string, unknown>) => Promise<{ data: unknown[] }>,
+          params: Record<string, unknown>,
+        ) {
+          const perPage = (params.per_page as number | undefined) ?? 30;
+          for (let page = 1; ; page++) {
+            const response = await route({ ...params, page });
+            yield response;
+            if (response.data.length < perPage) return;
+          }
+        },
+      };
       rest = {
         pulls: {
           listFiles: mockOctokitListFiles,
@@ -580,6 +594,27 @@ describe("GitHub webhook route", () => {
       const callData = mockEnqueueSbomScan.mock.calls[0][0];
       expect(callData.userId).not.toBe("");
       expect(callData.userId).toBe("user-real-owner");
+    });
+
+    it("finds a manifest past the first page of changed files", async () => {
+      // 45 changed files, the manifest last. GitHub pages this endpoint 30 at a
+      // time unless asked for more, and a request without `page` is page 1.
+      const changed = [
+        ...Array.from({ length: 44 }, (_, i) => ({ filename: `src/file-${i}.ts` })),
+        { filename: "package.json" },
+      ];
+      mockOctokitListFiles.mockImplementation(
+        async ({ page = 1, per_page = 30 }: { page?: number; per_page?: number }) => ({
+          data: changed.slice((page - 1) * per_page, page * per_page),
+        }),
+      );
+
+      await handlePullRequestSynchronize(syncPayload, "delivery-uuid-99");
+
+      expect(mockEnqueueSbomScan).toHaveBeenCalledWith(
+        expect.objectContaining({ fileName: "package.json" }),
+        expect.anything(),
+      );
     });
 
     it("skips SBOM enqueue when repository cannot be resolved in SecureFlow database", async () => {

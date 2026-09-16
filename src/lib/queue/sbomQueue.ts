@@ -49,6 +49,18 @@ export const sbomDLQ = new Queue(SBOM_DLQ_NAME, {
   connection: redis as any,
 });
 
+/**
+ * Make a job id BullMQ will accept.
+ *
+ * BullMQ rejects a custom job id containing `:` ("Custom Id cannot contain :")
+ * unless it splits into exactly three parts, a form it keeps for legacy
+ * repeatable jobs. `queue.add` throws before the job reaches Redis, so an id
+ * like `sbom:<repo>-<pr>-<sha>-package_json` never enqueues at all.
+ */
+export function toSbomJobId(raw: string): string {
+  return raw.replace(/:/g, "-");
+}
+
 export interface EnqueueSbomOptions {
   jobId?: string;
   dedupeKey?: string;
@@ -72,7 +84,11 @@ export async function enqueueSbomScan(
     throw new Error(`Manifest file exceeds maximum size limit of ${MAX_SBOM_BYTES} bytes`);
   }
 
-  const targetJobId = options.jobId ?? (options.dedupeKey ? `sbom:${options.dedupeKey}` : null);
+  const targetJobId = options.jobId
+    ? toSbomJobId(options.jobId)
+    : options.dedupeKey
+      ? toSbomJobId(`sbom-${options.dedupeKey}`)
+      : null;
 
   // 1. If a deterministic jobId or dedupeKey is provided, check BullMQ for an existing job first
   if (targetJobId && process.env.NEXT_PUBLIC_MOCK_DB !== "true") {

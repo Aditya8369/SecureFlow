@@ -9,6 +9,13 @@ vi.mock("ioredis", () => {
     set: vi.fn(),
     incr: vi.fn(),
     expire: vi.fn(),
+    pttl: vi.fn().mockResolvedValue(60000),
+    pipeline: vi.fn(() => ({
+      incr: vi.fn().mockReturnThis(),
+      expire: vi.fn().mockReturnThis(),
+      pttl: vi.fn().mockReturnThis(),
+      exec: vi.fn().mockResolvedValue([[null, 1], [null, 1], [null, 60000]]),
+    })),
     quit: vi.fn(),
   }));
   return { default: RedisMock, Redis: RedisMock };

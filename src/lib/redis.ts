@@ -195,22 +195,30 @@ export async function checkRateLimitDetailed(
 
   try {
     const incrementTask = (async (): Promise<RateLimitResult> => {
-      const current = await redis.incr(key);
+      const pipeline = redis.pipeline();
+      pipeline.incr(key);
+      pipeline.expire(key, windowSeconds, "NX"); // Only set expiry if key has no TTL
+      const results = await pipeline.exec();
 
-      // A fresh counter always gets a TTL. Without this the key would live
-      // forever in Redis and the client would be permanently blocked once it
-      // first crossed the limit.
+      if (!results) {
+        throw new Error("Redis pipeline execution returned null");
+      }
+
+      if (results[0]?.[0]) {
+        throw results[0][0];
+      }
+
+      const current = (results[0][1] as number) ?? 1;
+
+      // Retrieve the remaining TTL to maintain accurate X-RateLimit-Reset calculations
       let ttlMs = windowSeconds * 1000;
-      if (current === 1) {
-        await redis.expire(key, windowSeconds);
-      } else if (typeof redis.pttl === "function") {
+      if (typeof redis.pttl === "function") {
         const pttl = await redis.pttl(key);
         if (typeof pttl === "number" && pttl > 0) {
           ttlMs = pttl;
         } else if (typeof pttl === "number" && pttl < 0) {
-          // -1 means the key exists with no expiry, which can happen if a
-          // previous process died between INCR and EXPIRE. Re-arm it rather
-          // than leaving a counter that never resets.
+          // -1 means the key exists with no expiry. Re-arm it rather than leaving
+          // a counter that never resets.
           await redis.expire(key, windowSeconds);
         }
       }

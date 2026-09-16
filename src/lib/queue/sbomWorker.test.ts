@@ -69,12 +69,18 @@ describe("sbomWorker", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPrisma.scanJob.updateMany.mockResolvedValue({ count: 1 });
-    mockPrisma.$transaction.mockImplementation(async (cb: (tx: typeof mockPrisma) => Promise<unknown>) => cb(mockPrisma));
+    mockPrisma.$transaction.mockImplementation(
+      async (cb: (tx: typeof mockPrisma) => Promise<unknown>) => cb(mockPrisma),
+    );
     mockPrisma.scanResult.create.mockResolvedValue({ id: "sr-1" });
   });
 
   it("processes a valid package.json with vulnerabilities successfully and persists ScanResult + Findings", async () => {
-    mockPrisma.scanJob.findUnique.mockResolvedValue({ id: "sj-1", status: "PENDING", pullRequestId: "pr-1" });
+    mockPrisma.scanJob.findUnique.mockResolvedValue({
+      id: "sj-1",
+      status: "PENDING",
+      pullRequestId: "pr-1",
+    });
     mockPrisma.scanJob.update.mockResolvedValue({});
     mockPrisma.auditLog.create.mockResolvedValue({});
 

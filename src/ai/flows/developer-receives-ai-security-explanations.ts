@@ -8,7 +8,7 @@ import {
   isTimeoutError,
   withRetry,
 } from "./security-helpers";
-import { ai, defaultModel, securityExplanationModel } from "@/ai/genkit";
+import { ai, securityExplanationModel } from "@/ai/genkit";
 import {
   AISecurityExplanationInputSchema,
   AISecurityExplanationOutputSchema,

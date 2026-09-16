@@ -77,7 +77,9 @@ export default {
 
         // GitHub can return 200 OK with error in the body
         if (!response.ok || refreshedTokens.error) {
-          throw new Error(refreshedTokens.error_description || refreshedTokens.error || "Token refresh failed");
+          throw new Error(
+            refreshedTokens.error_description || refreshedTokens.error || "Token refresh failed",
+          );
         }
 
         // Verify required fields are present before using them

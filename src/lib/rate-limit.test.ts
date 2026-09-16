@@ -14,7 +14,11 @@ vi.mock("ioredis", () => {
       incr: vi.fn().mockReturnThis(),
       expire: vi.fn().mockReturnThis(),
       pttl: vi.fn().mockReturnThis(),
-      exec: vi.fn().mockResolvedValue([[null, 1], [null, 1], [null, 60000]]),
+      exec: vi.fn().mockResolvedValue([
+        [null, 1],
+        [null, 1],
+        [null, 60000],
+      ]),
     })),
     quit: vi.fn(),
   }));

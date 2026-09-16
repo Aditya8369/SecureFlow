@@ -52,10 +52,7 @@ vi.mock("@/lib/middleware/rate-limit", () => ({
 
 import { POST, MAX_REQUEST_BYTES } from "./route";
 
-function makePostRequest(
-  body: unknown,
-  headerOverrides: Record<string, string | null> = {},
-) {
+function makePostRequest(body: unknown, headerOverrides: Record<string, string | null> = {}) {
   const serialized = typeof body === "string" ? body : JSON.stringify(body);
   const headers: Record<string, string> = {
     "content-type": "application/json",

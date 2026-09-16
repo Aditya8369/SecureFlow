@@ -34,9 +34,7 @@ const sampleResults: FileScanResult[] = [
   },
 ];
 
-const emptyResults: FileScanResult[] = [
-  { path: "src/safe.ts", violations: [] },
-];
+const emptyResults: FileScanResult[] = [{ path: "src/safe.ts", violations: [] }];
 
 // ---------------------------------------------------------------------------
 // escapeCsv
@@ -139,9 +137,7 @@ describe("formatCsv", () => {
     const results: FileScanResult[] = [
       {
         path: "src/test.ts",
-        violations: [
-          { line: 1, text: 'console.log(a, b);', reason: "secret-named identifier" },
-        ],
+        violations: [{ line: 1, text: "console.log(a, b);", reason: "secret-named identifier" }],
       },
     ];
     const csv = formatCsv(results);
@@ -167,9 +163,7 @@ describe("formatCsv", () => {
     const results: FileScanResult[] = [
       {
         path: "src/test.ts",
-        violations: [
-          { line: 3, text: "line1\nline2", reason: "environment variable" },
-        ],
+        violations: [{ line: 3, text: "line1\nline2", reason: "environment variable" }],
       },
     ];
     const csv = formatCsv(results);
@@ -239,9 +233,7 @@ describe("formatHtml", () => {
     const results: FileScanResult[] = [
       {
         path: "src/<inject>/config.ts",
-        violations: [
-          { line: 1, text: "console.log(secret)", reason: "secret-named identifier" },
-        ],
+        violations: [{ line: 1, text: "console.log(secret)", reason: "secret-named identifier" }],
       },
     ];
     const html = formatHtml(results);

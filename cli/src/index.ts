@@ -120,7 +120,7 @@ async function main(): Promise<number> {
       violationCount += result.violations.length;
     }
   }
-  
+
   // AI-powered pass, additive on top of the local scan above. Only
   // affects the text output/exit code today -- JSON/SARIF export stays
   // local-scan-only for now so existing automated consumers of those
@@ -134,7 +134,7 @@ async function main(): Promise<number> {
   const aiViolationCount = aiFindings.filter(
     (f) => f.severity === "HIGH" || f.severity === "CRITICAL",
   ).length;
-  
+
   if (format === "sarif" || format === "json" || format === "csv" || format === "html") {
     const outputString = formatScanResults(fileResults, format);
     if (outputPath) {

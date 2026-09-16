@@ -20,11 +20,13 @@ import {
   parseSeverityFilter,
   parseSort,
   parseStatusFilter,
+  parseTypeFilter,
   planSeverityPage,
   requiresSeverityPlan,
   resolvePage,
   toSearchParams,
   totalPagesFor,
+  VALID_FINDING_TYPES,
 } from "./query";
 
 const CONTEXT = {
@@ -133,6 +135,28 @@ describe("parseStatusFilter", () => {
   });
 });
 
+describe("parseTypeFilter", () => {
+  it("keeps only recognised finding types", () => {
+    expect(parseTypeFilter(["SECRET", "BOGUS", "MISCONFIG"])).toEqual(["SECRET", "MISCONFIG"]);
+  });
+
+  it("normalises case and trims whitespace", () => {
+    expect(parseTypeFilter(["secret", " vulnerability ", "misconfig"])).toEqual([
+      "SECRET",
+      "VULNERABILITY",
+      "MISCONFIG",
+    ]);
+  });
+
+  it("de-duplicates", () => {
+    expect(parseTypeFilter(["SECRET", "secret"])).toEqual(["SECRET"]);
+  });
+
+  it("returns canonical order regardless of input order", () => {
+    expect(parseTypeFilter(["MISCONFIG", "SECRET"])).toEqual(["SECRET", "MISCONFIG"]);
+  });
+});
+
 describe("parseSort", () => {
   it.each(FINDING_SORTS)("accepts %s", (sort) => {
     expect(parseSort(sort)).toBe(sort);
@@ -179,6 +203,7 @@ describe("normalizeFindingsQuery", () => {
       page: -3,
       pageSize: 999999,
       severity: ["nonsense"],
+      type: ["nonsense"],
       status: ["nonsense"],
       sort: "nonsense",
       search: "   ",
@@ -187,6 +212,7 @@ describe("normalizeFindingsQuery", () => {
     expect(normalized.page).toBe(1);
     expect(normalized.pageSize).toBe(MAX_PAGE_SIZE);
     expect(normalized.severity).toEqual([]);
+    expect(normalized.type).toEqual([]);
     expect(normalized.status).toEqual([]);
     expect(normalized.sort).toBe(DEFAULT_SORT);
     expect(normalized.search).toBeNull();

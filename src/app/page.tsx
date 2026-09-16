@@ -88,11 +88,7 @@ export default async function LandingPage() {
             The Vault.
           </p>
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-4 w-full sm:w-auto mb-16">
-            <Link
-              href="https://github.com/GauravKarakoti/SecureFlow/tree/main/docs"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
+            <Link href="/docs">
               <Button
                 size="lg"
                 className="h-14 px-8 text-lg bg-primary text-background hover:bg-primary/90 hover:scale-105 transition-all duration-300 glow-primary font-bold uppercase rounded-sm cursor-pointer"

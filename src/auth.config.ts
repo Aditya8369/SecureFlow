@@ -75,14 +75,22 @@ export default {
 
         const refreshedTokens = await response.json();
 
-        if (!response.ok) {
-          throw refreshedTokens;
+        if (!response.ok || refreshedTokens.error) {
+          throw new Error(
+            refreshedTokens.error_description ||
+              refreshedTokens.error ||
+              "Token refresh failed"
+          );
+        }
+
+        if (!refreshedTokens.access_token || !refreshedTokens.expires_in) {
+          throw new Error("Token refresh response missing access_token or expires_in");
         }
 
         return {
           ...token,
           accessToken: refreshedTokens.access_token,
-          accessTokenExpires: Date.now() + refreshedTokens.expires_in * 1000,
+          accessTokenExpires: Date.now() + Number(refreshedTokens.expires_in) * 1000,
           refreshToken: refreshedTokens.refresh_token ?? token.refreshToken,
         };
       } catch (error) {

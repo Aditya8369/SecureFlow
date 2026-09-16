@@ -342,6 +342,17 @@ export async function processSbomJob(job: Job<SbomJobData>): Promise<SbomScanRes
           },
         })
         .catch(() => {});
+    } else {
+      // Hand the ScanJob back for BullMQ's retry. Left PROCESSING, the retry's
+      // PENDING -> PROCESSING claim above matches no row, the job is taken for
+      // one "already PROCESSING by another worker", and it completes with an
+      // empty CLEAN result while the ScanJob stays PROCESSING for good.
+      await prisma.scanJob
+        .updateMany({
+          where: { id: scanJobId, status: "PROCESSING" },
+          data: { status: "PENDING", startedAt: null },
+        })
+        .catch(() => {});
     }
 
     throw err;

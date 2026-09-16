@@ -10,7 +10,7 @@
 import { Worker, Job, UnrecoverableError } from "bullmq";
 import { redis } from "./redis";
 import prisma from "@/lib/prisma";
-import { parseManifestFile } from "@/lib/sbom/dependency-parser";
+import { isSupportedManifest, parseManifestFile } from "@/lib/sbom/dependency-parser";
 import { matchVulnerabilities } from "@/lib/sbom/vulnerability-matcher";
 import { sbomDLQ, SbomJobData, SBOM_QUEUE_NAME } from "./sbomQueue";
 import type { SbomScanResult } from "@/types/sbom";
@@ -166,23 +166,35 @@ export async function processSbomJob(job: Job<SbomJobData>): Promise<SbomScanRes
   }
 
   try {
-    // 4. Early validation of manifest syntax — avoid retrying inherently malformed inputs
+    // 4. Early validation of the manifest — avoid retrying inherently unreadable inputs, and
+    //    never report CLEAN for a file whose dependencies could not be read at all.
+    const failUnreadable = async (errorMsg: string): Promise<never> => {
+      await prisma.scanJob
+        .update({
+          where: { id: scanJobId },
+          data: {
+            status: "FAILED",
+            error: errorMsg,
+            completedAt: new Date(),
+          },
+        })
+        .catch(() => {});
+      throw new UnrecoverableError(errorMsg);
+    };
+
+    if (!isSupportedManifest(fileName)) {
+      await failUnreadable(`Unsupported manifest file ${fileName}`);
+    }
+
     if (fileName.endsWith("package.json")) {
+      let manifest: unknown;
       try {
-        JSON.parse(content);
+        manifest = JSON.parse(content);
       } catch {
-        const errorMsg = `Invalid JSON syntax in ${fileName}`;
-        await prisma.scanJob
-          .update({
-            where: { id: scanJobId },
-            data: {
-              status: "FAILED",
-              error: errorMsg,
-              completedAt: new Date(),
-            },
-          })
-          .catch(() => {});
-        throw new UnrecoverableError(errorMsg);
+        await failUnreadable(`Invalid JSON syntax in ${fileName}`);
+      }
+      if (typeof manifest !== "object" || manifest === null || Array.isArray(manifest)) {
+        await failUnreadable(`${fileName} must contain a JSON object`);
       }
     }
 

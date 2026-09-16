@@ -1,64 +1,61 @@
-import { z } from "genkit";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
-import { ai, securityExplanationModel } from "@/ai/genkit";
+const { mockGenerate } = vi.hoisted(() => ({ mockGenerate: vi.fn() }));
 
-// Use z.object() to create a standard Zod schema
-const PatchOutputSchema = z.object({
-  patchDiff: z.string().describe("The unified diff patch to fix the vulnerability."),
-  explanation: z.string().describe("Brief explanation of the changes made."),
+// defineFlow returns the handler itself, so the tests call the flow body directly
+// without starting Genkit or loading the Groq plugin.
+vi.mock("@/ai/genkit", () => ({
+  ai: {
+    defineFlow: (_config: unknown, handler: unknown) => handler,
+    generate: (...args: unknown[]) => mockGenerate(...args),
+  },
+  securityExplanationModel: "mock-security-model",
+}));
+
+import { generateRemediationPatchFlow } from "./generate-remediation-patch";
+
+const input = {
+  vulnerableCode: 'db.query("SELECT * FROM users WHERE id=" + id)',
+  findingDescription: "SQL injection via string concatenation",
+  filePath: "src/db.ts",
+};
+
+describe("generateRemediationPatchFlow", () => {
+  beforeEach(() => {
+    mockGenerate.mockReset();
+  });
+
+  it("returns the model's patch and sends the finding context in the prompt", async () => {
+    const output = { patchDiff: "--- a/src/db.ts\n+++ b/src/db.ts", explanation: "Use params." };
+    mockGenerate.mockResolvedValue({ output });
+
+    await expect(generateRemediationPatchFlow(input)).resolves.toEqual(output);
+
+    expect(mockGenerate).toHaveBeenCalledTimes(1);
+    const [request] = mockGenerate.mock.calls[0];
+    expect(request.model).toBe("mock-security-model");
+    expect(request.output).toMatchObject({ format: "json" });
+    expect(request.prompt).toContain("File: src/db.ts");
+    expect(request.prompt).toContain("Vulnerability: SQL injection via string concatenation");
+    expect(request.prompt).toContain(input.vulnerableCode);
+  });
+
+  it("falls back to static guidance when the AI provider throws", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockGenerate.mockRejectedValue(new Error("Request timed out"));
+
+    const result = await generateRemediationPatchFlow(input);
+
+    expect(result.patchDiff).toBe("");
+    expect(result.explanation).toMatch(/temporarily unavailable/);
+  });
+
+  it("falls back to static guidance when the model returns no output", async () => {
+    mockGenerate.mockResolvedValue({ output: null });
+
+    const result = await generateRemediationPatchFlow(input);
+
+    expect(result.patchDiff).toBe("");
+    expect(result.explanation).toMatch(/temporarily unavailable/);
+  });
 });
-
-/**
- * Genkit AI Flow: Generate Remediation Patch
- * Analyzes a security finding and its surrounding code context to generate a unified diff patch.
- */
-
-export const generateRemediationPatchFlow = ai.defineFlow(
-  {
-    name: "generateRemediationPatch",
-    inputSchema: z.object({
-      vulnerableCode: z.string(),
-      findingDescription: z.string(),
-      filePath: z.string(),
-    }),
-    outputSchema: PatchOutputSchema,
-  },
-  async (input) => {
-    const prompt = `
-You are an expert security engineer. Your task is to generate a unified diff patch to fix the following security vulnerability.
-
-File: ${input.filePath}
-
-Vulnerability: ${input.findingDescription}
-
-Current Code:
-
-\`\`\`
-${input.vulnerableCode}
-\`\`\`
-
-Provide ONLY the unified diff patch that fixes this issue securely. Do not include markdown code blocks around the diff, just the raw diff text. Also provide a brief 1-sentence explanation of the fix.
-
-`;
-
-    try {
-      const { output } = await ai.generate({
-        model: securityExplanationModel,
-        prompt: prompt,
-        output: { schema: PatchOutputSchema, format: "json" },
-      });
-
-      if (output) {
-        return output;
-      }
-    } catch (error) {
-      console.warn("[REMEDIATION] AI provider unavailable, using static fallback:", error);
-    }
-
-    return {
-      patchDiff: "",
-      explanation:
-        "The AI remediation service is temporarily unavailable. Please review the vulnerability manually and apply the appropriate secure remediation before merging.",
-    };
-  },
-);

@@ -1,4 +1,4 @@
-﻿# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.7
 # ============================================================================
 # SecureFlow — Next.js Standalone Production Dockerfile (#478)
 #
@@ -80,7 +80,7 @@ RUN apk update && apk upgrade --no-cache
 WORKDIR /opt/prisma-cli
 RUN --mount=type=cache,target=/root/.npm npm init -y \
  && npm install --omit=dev --ignore-scripts --no-audit --no-fund \
-      dotenv@16.6.1 prisma@7.8.0
+      dotenv@16.6.1 prisma@7.10.0
 
 
 # ----------------------------------------------------------------------------

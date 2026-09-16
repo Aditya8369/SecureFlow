@@ -131,13 +131,19 @@ export async function handlePullRequestSynchronize(
       if (file.filename.endsWith("package.json") || file.filename.endsWith("requirements.txt")) {
         console.log(`[SBOM] Detected manifest: ${file.filename}`);
 
-        // Fetch content (using PR head ref to get the version being merged)
+        // Fetch the manifest at the PR's head commit. `head.ref` is a branch
+        // name in the head repository: for a pull request from a fork that
+        // branch does not exist on the base repository queried here (the fetch
+        // 404s and the manifest is skipped), or it names an unrelated base
+        // branch such as `main` and the wrong file is scanned. It is also a
+        // moving target, while the dedupe key below is tied to `headSha`.
+        // GitHub serves a pull request's head commit from the base repository.
         const content = await fetchFileContent(
           octokit,
           owner,
           repo,
           file.filename,
-          pull_request.head.ref,
+          headSha || pull_request.head.ref,
         );
 
         if (content) {

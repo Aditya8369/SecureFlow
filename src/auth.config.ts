@@ -75,8 +75,14 @@ export default {
 
         const refreshedTokens = await response.json();
 
-        if (!response.ok) {
-          throw refreshedTokens;
+        // GitHub can return 200 OK with error in the body
+        if (!response.ok || refreshedTokens.error) {
+          throw new Error(refreshedTokens.error_description || refreshedTokens.error || "Token refresh failed");
+        }
+
+        // Verify required fields are present before using them
+        if (!refreshedTokens.access_token || !refreshedTokens.expires_in) {
+          throw new Error("Invalid token response: missing access_token or expires_in");
         }
 
         return {

@@ -70,26 +70,28 @@ async function handler(request: NextRequest, { params }: { params: Promise<{ id:
 
   const { id } = await params;
 
-  // Combined query: check existence and ownership in a single database call
-  const finding = await prisma.finding.findFirst({
-    where: {
-      id,
-      scanResult: { pullRequest: { repository: { userId } } },
-    },
+  // One query answers both questions: does the finding exist (404 if not), and does it
+  // belong to the signed-in user (403 if not). Only fields that exist on `Finding` may be
+  // selected — Prisma rejects an unknown field at runtime, not at compile time.
+  const finding = await prisma.finding.findUnique({
+    where: { id },
     select: {
       id: true,
       type: true,
       severity: true,
-      file: true,
-      description: true,
+      fileLocation: true,
       codeSnippet: true,
-      remediation: true,
-      line: true,
-      aiExplanation: true,
+      scanResult: {
+        select: { pullRequest: { select: { repository: { select: { userId: true } } } } },
+      },
     },
   });
 
   if (!finding) {
+    return NextResponse.json({ error: "Finding not found" }, { status: 404 });
+  }
+
+  if (finding.scanResult.pullRequest.repository.userId !== userId) {
     return NextResponse.json(
       { error: "Forbidden: You do not have access to this finding" },
       { status: 403 },

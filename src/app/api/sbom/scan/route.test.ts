@@ -122,6 +122,17 @@ describe("POST /api/sbom/scan", () => {
     expect(enqueueSbomScanMock).not.toHaveBeenCalled();
   });
 
+  it("returns 400 Bad Request when fileName is not a supported manifest", async () => {
+    const req = makePostRequest({ fileName: "pom.xml", content: "<project></project>" });
+    const res = await POST(req);
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      error: expect.stringContaining("supported manifest"),
+    });
+    expect(enqueueSbomScanMock).not.toHaveBeenCalled();
+  });
+
   it("returns 400 Bad Request when fileName contains path traversal", async () => {
     const req = makePostRequest({
       fileName: "../../etc/passwd",

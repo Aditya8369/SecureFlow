@@ -323,7 +323,7 @@ describe("buildFindingsWhere", () => {
     ) as any;
 
     expect(where.severity).toEqual({ in: ["CRITICAL"] });
-    expect(where.type).toEqual({ in: ["Secret"] });
+    expect(where.type).toEqual({ in: ["SECRET"] });
     expect(where.scanResult.pullRequest.repository.id).toBe("repo-9");
   });
 
@@ -510,7 +510,7 @@ describe("searchParams round-trip", () => {
     expect(params).toContain("sort=severity");
     expect(params).toContain("severity=CRITICAL");
     expect(params).toContain("severity=HIGH");
-    expect(params).toContain("type=Secret");
+    expect(params).toContain("type=SECRET");
     expect(params).toContain("status=OPEN");
     expect(params).toContain("repo=repo-1");
     expect(params).toContain("q=aws+key");

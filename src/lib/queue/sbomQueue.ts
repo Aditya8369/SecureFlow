@@ -175,7 +175,12 @@ export async function enqueueSbomScan(
     });
 
     // Concurrency guard: if BullMQ returned an existing job with a different scanJobId, clean up our newly created orphaned scanJob
-    if (added && added.id === finalJobId && added.data?.scanJobId && added.data.scanJobId !== scanJob.id) {
+    if (
+      added &&
+      added.id === finalJobId &&
+      added.data?.scanJobId &&
+      added.data.scanJobId !== scanJob.id
+    ) {
       await prisma.scanJob.delete({ where: { id: scanJob.id } }).catch(() => {});
       return { jobId: finalJobId, scanJobId: added.data.scanJobId };
     }
@@ -285,7 +290,8 @@ export async function getSbomJobStatus(scanJobId: string): Promise<SbomJobStatus
               cveId: f.explanation?.match(/CVE-[A-Za-z0-9-]+/)?.[0] || "CVE-UNKNOWN",
               severity: f.severity as any,
               description: f.explanation || "",
-              patchedVersion: f.remediation?.replace(/Update .* to version | or higher\./g, "") || "",
+              patchedVersion:
+                f.remediation?.replace(/Update .* to version | or higher\./g, "") || "",
             })),
             status: scanResult.policyDecision === "BLOCK" ? "VULNERABLE" : "CLEAN",
           };

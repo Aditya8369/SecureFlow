@@ -355,7 +355,8 @@ const concurrency = parseInt(
 
 export const sbomWorker = new Worker<SbomJobData>(SBOM_QUEUE_NAME, processSbomJob, {
   connection: redis as any,
-  concurrency: Number.isFinite(concurrency) && concurrency > 0 ? concurrency : DEFAULT_SBOM_CONCURRENCY,
+  concurrency:
+    Number.isFinite(concurrency) && concurrency > 0 ? concurrency : DEFAULT_SBOM_CONCURRENCY,
 });
 
 sbomWorker.on("completed", (job: Job) => {

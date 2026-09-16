@@ -114,10 +114,7 @@ const handler = withErrorHandler(async function POST(req: NextRequest) {
 
   const parsed = sbomScanSchema.safeParse(body);
   if (!parsed.success) {
-    throw new AppError(
-      parsed.error.issues.map((i) => i.message).join(", "),
-      400,
-    );
+    throw new AppError(parsed.error.issues.map((i) => i.message).join(", "), 400);
   }
 
   const { fileName, content, repositoryId } = parsed.data;

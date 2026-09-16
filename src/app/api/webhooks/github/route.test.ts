@@ -530,7 +530,9 @@ describe("GitHub webhook route", () => {
       });
       mockOctokitGetContent.mockResolvedValue({
         data: {
-          content: Buffer.from(JSON.stringify({ dependencies: { lodash: "4.17.20" } })).toString("base64"),
+          content: Buffer.from(JSON.stringify({ dependencies: { lodash: "4.17.20" } })).toString(
+            "base64",
+          ),
         },
       });
     });
@@ -616,7 +618,9 @@ describe("GitHub webhook route", () => {
       // Stable logical dedupe keys and jobIds are identical
       expect(firstOptions.dedupeKey).toBe(secondOptions.dedupeKey);
       expect(firstOptions.jobId).toBe(secondOptions.jobId);
-      expect(firstOptions.dedupeKey).toBe("webhook:repo-uuid-1:pr-uuid-1:commit-sha-123:package.json");
+      expect(firstOptions.dedupeKey).toBe(
+        "webhook:repo-uuid-1:pr-uuid-1:commit-sha-123:package.json",
+      );
     });
   });
 });

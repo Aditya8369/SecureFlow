@@ -93,9 +93,11 @@ jobs:
           # cli/ is an npm workspace, so its dependencies are locked in the root lockfile.
           cache-dependency-path: package-lock.json
 
-      - name: Install CLI dependencies
-        run: npm install
-        working-directory: cli
+      # Install from the root: `npm install` inside cli/ installs only the workspace's own
+      # dependencies (no prisma, no vite for vitest) but still runs the root `postinstall`
+      # (`prisma generate`), which fails with "prisma: not found".
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
 
       - name: Build CLI
         run: npm run build

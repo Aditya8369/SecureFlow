@@ -231,6 +231,39 @@ describe("sbomWorker", () => {
     );
   });
 
+  it.each([
+    [
+      "an unsupported manifest",
+      "pom.xml",
+      "<project></project>",
+      "Unsupported manifest file pom.xml",
+    ],
+    ["a package.json that is JSON null", "package.json", "null", "must contain a JSON object"],
+    ["a package.json that is a JSON array", "package.json", "[]", "must contain a JSON object"],
+  ])("marks ScanJob FAILED instead of CLEAN for %s", async (_label, fileName, content, error) => {
+    mockPrisma.scanJob.findUnique.mockResolvedValue({ id: "sj-unreadable", status: "PENDING" });
+    mockPrisma.scanJob.update.mockResolvedValue({});
+
+    const job = {
+      id: "job-unreadable",
+      data: { scanJobId: "sj-unreadable", fileName, content, userId: "user-1" },
+      opts: { attempts: 3 },
+      attemptsMade: 0,
+    } as any;
+
+    await expect(processSbomJob(job)).rejects.toThrow(UnrecoverableError);
+
+    expect(mockPrisma.scanJob.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "sj-unreadable" },
+        data: expect.objectContaining({ status: "FAILED", error: expect.stringContaining(error) }),
+      }),
+    );
+    expect(mockPrisma.scanJob.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "COMPLETED" }) }),
+    );
+  });
+
   describe("durable idempotency & completed-state recovery (Finding 2)", () => {
     const cachedResult = {
       scanId: "sj-done-1",

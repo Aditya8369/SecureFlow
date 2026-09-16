@@ -14,6 +14,7 @@ import { auth } from "@/auth";
 import { withErrorHandler, AppError } from "@/lib/middleware/error-handler";
 import { withRateLimit } from "@/lib/middleware/rate-limit";
 import { enqueueSbomScan, MAX_SBOM_BYTES } from "@/lib/queue/sbomQueue";
+import { isSupportedManifest, SUPPORTED_MANIFESTS } from "@/lib/sbom/dependency-parser";
 import prisma from "@/lib/prisma";
 import { z } from "zod";
 
@@ -28,6 +29,10 @@ const sbomScanSchema = z.object({
     .min(1, "fileName is required")
     .refine((name) => !name.includes("..") && !name.startsWith("/"), {
       message: "fileName must not contain path traversal characters",
+    })
+    // An unsupported file parses to zero dependencies, which the worker would report as CLEAN.
+    .refine(isSupportedManifest, {
+      message: `fileName must be a supported manifest (${SUPPORTED_MANIFESTS.join(", ")})`,
     }),
   content: z.string().min(1, "content is required"),
   repositoryId: z.string().optional(),

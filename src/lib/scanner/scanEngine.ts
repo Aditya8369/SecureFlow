@@ -92,6 +92,14 @@ export interface ProcessScanJobOptions {
   report?: boolean;
   /** Write the `PullRequest`, `ScanResult`, `Finding` and `AuditLog` rows. */
   persist?: boolean;
+  /**
+   * Request an AI explanation for each active finding.
+   *
+   * The webhook worker explains the findings itself (and masks the output) before it
+   * posts them, so enriching here as well paid for every explanation twice and threw
+   * the first copy away.
+   */
+  enrich?: boolean;
 }
 
 /**
@@ -109,7 +117,7 @@ export async function processScanJob(
   onProgress: ProgressCallback = () => {},
   options: ProcessScanJobOptions = {},
 ): Promise<ScanJobResult> {
-  const { report = true, persist = true } = options;
+  const { report = true, persist = true, enrich = true } = options;
   const {
     scanJobId,
     repositoryId,
@@ -245,6 +253,7 @@ export async function processScanJob(
   // Enrich active findings with AI explanations
   const enrichedFindings: EnrichedScanFinding[] = await Promise.all(
     activeFindings.map(async (finding): Promise<EnrichedScanFinding> => {
+      if (!enrich) return finding;
       try {
         const aiResponse = await developerReceivesAISecurityExplanations({
           findingType: finding.type,

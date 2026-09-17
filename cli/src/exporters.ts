@@ -19,17 +19,29 @@ import type { FileScanResult } from "./scanner.js";
 // ---------------------------------------------------------------------------
 
 /**
+ * Leading characters that make a spreadsheet evaluate a cell as a formula.
+ *
+ * Same set as the server-side exporter (`src/lib/utils/csv.ts`). A leading TAB or CR is
+ * stripped by some importers, exposing the character after it.
+ */
+const FORMULA_TRIGGERS = ["=", "+", "-", "@", "\t", "\r"];
+
+/**
  * Escapes a value for safe embedding in a CSV cell per RFC 4180.
  *
+ * - A value starting with a formula trigger is prefixed with `'`, so Excel, LibreOffice and
+ *   Google Sheets show it as text instead of running it (CWE-1236). The cells hold file paths
+ *   and source lines from the scanned commit, which anyone who can open a PR controls.
  * - If the value contains a comma, double-quote, or newline, the entire value
  *   is wrapped in double-quotes.
  * - Any internal double-quotes are doubled (`"` → `""`).
  */
 export function escapeCsv(value: string): string {
-  if (value.includes('"') || value.includes(",") || value.includes("\n") || value.includes("\r")) {
-    return `"${value.replace(/"/g, '""')}"`;
+  const text = FORMULA_TRIGGERS.some((trigger) => value.startsWith(trigger)) ? `'${value}` : value;
+  if (text.includes('"') || text.includes(",") || text.includes("\n") || text.includes("\r")) {
+    return `"${text.replace(/"/g, '""')}"`;
   }
-  return value;
+  return text;
 }
 
 /**

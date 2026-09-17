@@ -70,6 +70,25 @@ export interface ScanProgress {
 type ProgressCallback = (progress: ScanProgress) => void;
 
 /**
+ * A chunk of the pull request could not be scanned.
+ *
+ * `scanner.scanPullRequest` throws once its own retries are exhausted precisely so a scan
+ * the LLM never completed cannot be reported as clean (6452440). Swallowing that error
+ * here and carrying on turned an unavailable analysis engine back into a `PASS` check
+ * run with zero findings, for the webhook worker as well as the queued path.
+ */
+export class ScanIncompleteError extends Error {
+  constructor(
+    readonly failedFiles: readonly string[],
+    readonly cause: unknown,
+  ) {
+    const reason = cause instanceof Error ? cause.message : String(cause);
+    super(`Scan incomplete: ${failedFiles.length} file(s) could not be analysed (${reason})`);
+    this.name = "ScanIncompleteError";
+  }
+}
+
+/**
  * Which of the engine's side effects to run.
  *
  * `src/lib/queue/worker.ts` calls `processScanJob` for the scanning and then
@@ -183,7 +202,13 @@ export async function processScanJob(
       allFindings.push(...chunkFindings);
     } catch (err) {
       console.error(`[ScanEngine] Error scanning chunk ${i}-${i + chunk.length}:`, err);
-      // Continue with next chunk — partial results are better than no results
+      // Fail the scan rather than continue: findings from the other chunks would be
+      // evaluated as if these files were clean, and a PR whose risky file sat in this
+      // chunk would pass.
+      throw new ScanIncompleteError(
+        chunk.map((file) => file.filename),
+        err,
+      );
     }
 
     scannedFiles = Math.min(i + CHUNK_SIZE, totalFiles);

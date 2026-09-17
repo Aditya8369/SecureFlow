@@ -70,6 +70,7 @@ export const POST = withRateLimit(handler, {
   limit: 20,
   windowSeconds: 60,
   keyPrefix: "cli:scan",
+  fallbackStrategy: "fail-closed",
 });
 
 export const dynamic = "force-dynamic";

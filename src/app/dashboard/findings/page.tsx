@@ -52,15 +52,15 @@ export default async function FindingsPage({
           totalDependencies: sbomFindings.length,
           vulnerabilities: sbomFindings.map((v: any) => ({
             dependency: {
-              name: v.file.split("/").pop() || v.file,
+              name: v.fileLocation.split("/").pop() || v.fileLocation,
               version: "latest",
-              manifestFile: v.file,
-              ecosystem: v.file.endsWith("package.json") ? "npm" : "pip",
+              manifestFile: v.fileLocation,
+              ecosystem: v.fileLocation.endsWith("package.json") ? "npm" : "pip",
             },
-            cveId: v.description.match(/CVE-\d{4}-\d+/)?.[0] || "CVE-Aggregated",
+            cveId: (v.explanation ?? "").match(/CVE-\d{4}-\d+/)?.[0] || "CVE-Aggregated",
             severity: v.severity,
-            description: v.description,
-            patchedVersion: v.remediation.match(/version\s+(\S+)/i)?.[1] || "N/A",
+            description: v.explanation ?? "",
+            patchedVersion: (v.remediation ?? "").match(/version\s+(\S+)/i)?.[1] || "N/A",
           })),
           status: sbomFindings.some((f) => f.severity === "CRITICAL" || f.severity === "HIGH")
             ? "VULNERABLE"

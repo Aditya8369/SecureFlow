@@ -2,6 +2,7 @@ import NextAuth from "next-auth";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import prisma from "@/lib/prisma";
 import authConfig from "./auth.config";
+import { isMockAuthEnabled } from "@/lib/mock-auth";
 
 const CITIES = [
   "Tokyo",
@@ -113,7 +114,7 @@ export const handlers = nextAuthResult.handlers;
 export const signIn = nextAuthResult.signIn;
 export const signOut = nextAuthResult.signOut;
 export const auth = async (...args: any[]) => {
-  if (process.env.NEXT_PUBLIC_MOCK_AUTH === "true") {
+  if (isMockAuthEnabled()) {
     let mockSessionCookie: string | undefined;
     try {
       const { cookies } = await import("next/headers");

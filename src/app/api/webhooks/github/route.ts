@@ -223,7 +223,7 @@ const handler = withErrorHandler(async function POST(req: NextRequest) {
   if (isPayloadTooLarge(req.headers.get("content-length"), maxBytes)) {
     throw new AppError("Webhook payload exceeds the configured size limit", 413);
   }
-  const webhookSecret = env.GITHUB_WEBHOOK_SECRET;
+  const webhookSecret = env.GITHUB_WEBHOOK_SECRET ?? process.env.GITHUB_WEBHOOK_SECRET;
   if (!webhookSecret || !webhookSecret.trim()) {
     throw new AppError("GITHUB_WEBHOOK_SECRET is not set", 500);
   }
@@ -289,14 +289,7 @@ const handler = withErrorHandler(async function POST(req: NextRequest) {
     return NextResponse.json({ message: "Event not tracked", deliveryId }, { status: 200 });
   }
 
-  // Route event actions
-  if (event === "pull_request" && parsed.payload.action === "synchronize") {
-    await handlePullRequestSynchronize(parsed.payload, deliveryId);
-  } else if (event === "branch_protection_rule") {
-    await handleBranchProtectionMutation(parsed.payload);
-  }
-
-  // 7. Delegate to the queue.
+  // 6. Delegate to the queue.
   //
   // The job ID is derived from the delivery ID so BullMQ collapses a replayed
   // delivery before a worker picks it up, rather than leaving the worker's

@@ -530,7 +530,17 @@ export class ArmorIQScanner {
         lowerFile.endsWith(".rs")
       ) {
         fileContext =
-          "THIS IS A SMART CONTRACT OR PRIVACY-PRESERVING ZERO-KNOWLEDGE CIRCUIT. Analyze it with decentralized architecture patterns in mind and reduce false positives for decentralized logic.";
+          "THIS IS A SMART CONTRACT OR PRIVACY-PRESERVING ZERO-KNOWLEDGE CIRCUIT. " +
+          "For Solidity (.sol): check for reentrancy (state change after external call), tx.origin auth bypass, unchecked arithmetic, and delegatecall storage collision. " +
+          "For Rust (.rs) Soroban/Solana: check for unchecked arithmetic, missing CPI signer verification, and account ownership validation. " +
+          "For Aleo Leo (.leo) or Circom: check for under-constrained signals, missing range checks on field elements, and soundness bugs. " +
+          "Reduce false positives for decentralized architecture patterns (e.g., public state is intentional in contracts).";
+      } else if (lowerFile.endsWith(".circom")) {
+        fileContext =
+          "THIS IS A CIRCOM ZERO-KNOWLEDGE CIRCUIT. " +
+          "Check for under-constrained signals (signals used in witness but not constrained), " +
+          "missing binary range checks (signal * (signal - 1) === 0 for binary signals), " +
+          "and soundness bugs where a malicious prover could satisfy constraints with an invalid witness.";
       }
       const sanitizedLines = sanitizeRecursively(addedLines);
       const maskedLines = maskIngressFileContent(sanitizedLines);

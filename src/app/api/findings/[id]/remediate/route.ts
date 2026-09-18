@@ -1,3 +1,4 @@
+﻿import { withRateLimit, TIERS } from "@/lib/middleware/rate-limit";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 // 2. Correct default Prisma import
@@ -8,7 +9,10 @@ import { generateRemediationPatchFlow } from "@/ai/flows/generate-remediation-pa
  * POST /api/findings/[id]/remediate
  * Triggers the AI flow to generate a remediation patch for a specific finding.
  */
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+const handler = async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
   try {
     const session = await auth();
     if (!session?.user?.id) {
@@ -19,7 +23,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const findingId = id;
     const finding = await prisma.finding.findUnique({
       where: { id: findingId },
-      include: { repository: true },
+      select: {
+        id: true,
+        codeSnippet: true,
+        description: true,
+        filePath: true,
+      },
     });
 
     if (!finding) {
@@ -45,4 +54,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     console.error("[REMEDIATE_PATCH_ERROR]", error);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
-}
+};
+
+export const POST = withRateLimit(
+  handler as (req: NextRequest, ...args: unknown[]) => Promise<NextResponse>,
+  { ...TIERS.AI_STREAM, keyPrefix: "remediate:ip" },
+) as typeof handler;

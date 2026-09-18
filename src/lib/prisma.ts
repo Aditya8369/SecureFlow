@@ -201,14 +201,17 @@ function createMockPrismaClient() {
 
           {
             id: "finding-2",
-            type: "DEPENDENCY_VULNERABILITY",
+            // The shape the SBOM worker stores: FindingType has no dependency
+            // member, so a dependency finding is a VULNERABILITY on the
+            // manifest with a "Dependency: name@version" snippet.
+            type: "VULNERABILITY",
             severity: "HIGH",
-            fileLocation: "package-lock.json",
+            fileLocation: "package.json",
             lineStart: null,
             lineEnd: null,
-            codeSnippet: null,
+            codeSnippet: "Dependency: lodash@4.17.20\nPatched: 4.17.21",
             explanation: "A dependency with a known vulnerability was detected.",
-            remediation: "Upgrade the affected dependency.",
+            remediation: "Update lodash to version 4.17.21 or higher.",
             promptInjectionSuspected: false,
             fingerprint: "mock-fingerprint-2",
             createdAt: new Date(Date.now() - 1000 * 60 * 10),

@@ -19,7 +19,7 @@ test.describe("Findings dashboard", () => {
 
     await expect(page.getByText("Security Findings")).toBeVisible();
     await expect(page.getByText("SECRET Detected")).toBeVisible();
-    await expect(page.getByText("DEPENDENCY_VULNERABILITY Detected")).toBeVisible();
+    await expect(page.getByText("VULNERABILITY Detected")).toBeVisible();
 
     await expect(page.getByText("SBOM Dependency Scan")).toBeVisible();
     await expect(page.getByText("VULNERABLE")).toBeVisible();

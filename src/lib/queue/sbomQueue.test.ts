@@ -65,7 +65,27 @@ import {
   getSbomJobStatus,
   getSbomQueueMetrics,
   MAX_SBOM_BYTES,
+  toSbomJobId,
 } from "./sbomQueue";
+
+/**
+ * Run BullMQ's own custom-id validation, which `queue.add` performs before
+ * anything reaches Redis. The module-level mock replaces `Queue`, so the real
+ * `Job` class is loaded directly.
+ */
+async function bullmqRejects(jobId: string): Promise<string | null> {
+  const { Job } = await vi.importActual<typeof import("bullmq")>("bullmq");
+  const queue = { toKey: (key: string) => key, opts: {}, keys: {}, qualifiedName: "q" };
+  const job = new Job(queue as never, "process-sbom", {}, { jobId });
+  // `validateOptions` is protected; it is the check `queue.add` runs.
+  const validate = (job as unknown as { validateOptions(json: unknown): void }).validateOptions;
+  try {
+    validate.call(job, job.asJSON());
+    return null;
+  } catch (err) {
+    return (err as Error).message;
+  }
+}
 
 describe("sbomQueue", () => {
   beforeEach(() => {
@@ -166,8 +186,29 @@ describe("sbomQueue", () => {
     });
 
     describe("stable deduplication (Finding 6)", () => {
+      /**
+       * Keep written audit rows and answer `findFirst` from them, comparing
+       * `action` and the JSON metadata path exactly, as Postgres does.
+       */
+      function storeAuditRowsInMemory() {
+        const written: Array<{ action: string; metadata: Record<string, unknown> }> = [];
+        mockPrisma.auditLog.create.mockImplementation(async ({ data }: { data: any }) => {
+          written.push(data);
+          return data;
+        });
+        mockPrisma.auditLog.findFirst.mockImplementation(async ({ where }: { where: any }) => {
+          return (
+            written.find(
+              (row) =>
+                row.action === where.action &&
+                row.metadata?.[where.metadata.path[0]] === where.metadata.equals,
+            ) ?? null
+          );
+        });
+      }
+
       it("reuses existing ScanJob when BullMQ already has the logical job", async () => {
-        const stableJobId = "sbom:repo-1-pr-1-sha1-pkg";
+        const stableJobId = "sbom-repo-1-pr-1-sha1-pkg";
         mockQueueInstance.getJob.mockResolvedValue({
           id: stableJobId,
           data: { scanJobId: "sj-existing-bullmq" },
@@ -225,6 +266,44 @@ describe("sbomQueue", () => {
         expect(mockQueueInstance.add).not.toHaveBeenCalled();
       });
 
+      it("finds the audit row an earlier enqueue actually wrote for the same dedupeKey", async () => {
+        // The shape the webhook builds: repo id, PR id, a 40-character head SHA
+        // and the manifest path.
+        const dedupeKey =
+          "webhook:cmfrepo00000001:cmfpr000000001:4f2c9a1e8b7d6c5a4f3e2d1c0b9a8f7e6d5c4b3a:package.json";
+        mockQueueInstance.getJob.mockResolvedValue(null);
+        mockPrisma.scanJob.create.mockResolvedValueOnce({ id: "sj-first" });
+        storeAuditRowsInMemory();
+        mockPrisma.scanJob.findUnique.mockResolvedValue({ id: "sj-first", status: "PENDING" });
+
+        const input = { fileName: "package.json", content: "{}", userId: "user-1" };
+        const first = await enqueueSbomScan(input, { dedupeKey, deliveryId: "delivery-1" });
+        const second = await enqueueSbomScan(input, { dedupeKey, deliveryId: "delivery-2" });
+
+        expect(first.scanJobId).toBe("sj-first");
+        expect(second.scanJobId).toBe("sj-first");
+        expect(mockPrisma.scanJob.create).toHaveBeenCalledTimes(1);
+        expect(mockQueueInstance.add).toHaveBeenCalledTimes(1);
+      });
+
+      it("does not treat a different head commit as the same scan", async () => {
+        const keyFor = (sha: string) =>
+          `webhook:cmfrepo00000001:cmfpr000000001:${sha}:package.json`;
+        mockQueueInstance.getJob.mockResolvedValue(null);
+        mockPrisma.scanJob.create
+          .mockResolvedValueOnce({ id: "sj-old-commit" })
+          .mockResolvedValueOnce({ id: "sj-new-commit" });
+        storeAuditRowsInMemory();
+        mockPrisma.scanJob.findUnique.mockResolvedValue({ id: "sj-old-commit" });
+
+        const input = { fileName: "package.json", content: "{}", userId: "user-1" };
+        await enqueueSbomScan(input, { dedupeKey: keyFor("a".repeat(40)) });
+        const next = await enqueueSbomScan(input, { dedupeKey: keyFor("b".repeat(40)) });
+
+        expect(next.scanJobId).toBe("sj-new-commit");
+        expect(mockPrisma.scanJob.create).toHaveBeenCalledTimes(2);
+      });
+
       it("deletes newly-created duplicate ScanJob if BullMQ concurrently returns an older job", async () => {
         mockQueueInstance.getJob.mockResolvedValue(null);
         mockPrisma.auditLog.findFirst.mockResolvedValue(null);
@@ -234,7 +313,7 @@ describe("sbomQueue", () => {
 
         // BullMQ add returns existing job from another concurrent caller
         mockQueueInstance.add.mockResolvedValue({
-          id: "sbom:repo-1-pr-1",
+          id: "sbom-repo-1-pr-1",
           data: { scanJobId: "sj-racing-existing" },
         });
 
@@ -245,12 +324,12 @@ describe("sbomQueue", () => {
             userId: "user-1",
           },
           {
-            jobId: "sbom:repo-1-pr-1",
+            jobId: "sbom-repo-1-pr-1",
           },
         );
 
         expect(result).toEqual({
-          jobId: "sbom:repo-1-pr-1",
+          jobId: "sbom-repo-1-pr-1",
           scanJobId: "sj-racing-existing",
         });
         // Verified orphaned duplicate was cleaned up
@@ -258,6 +337,41 @@ describe("sbomQueue", () => {
           where: { id: "sj-racing-new" },
         });
       });
+    });
+  });
+
+  describe("BullMQ job ids", () => {
+    it("rejects the colon-prefixed id the webhook used to pass", async () => {
+      expect(await bullmqRejects("sbom:repo-1-pr-1-sha1-package_json")).toBe(
+        "Custom Id cannot contain :",
+      );
+    });
+
+    it("accepts ids produced by toSbomJobId", async () => {
+      expect(toSbomJobId("sbom:repo-1-pr-1-sha1-package_json")).toBe(
+        "sbom-repo-1-pr-1-sha1-package_json",
+      );
+      expect(await bullmqRejects(toSbomJobId("sbom:repo-1-pr-1-sha1-package_json"))).toBeNull();
+    });
+
+    it.each([
+      ["an explicit jobId", { jobId: "sbom:repo-1-pr-1-sha1-package_json" }],
+      ["a dedupeKey", { dedupeKey: "webhook:repo-1:pr-1:sha1:package.json" }],
+    ])("enqueues with an id BullMQ accepts when given %s", async (_label, options) => {
+      mockQueueInstance.getJob.mockResolvedValue(null);
+      mockPrisma.auditLog.findFirst.mockResolvedValue(null);
+      mockPrisma.scanJob.create.mockResolvedValue({ id: "sj-ids" });
+      mockPrisma.auditLog.create.mockResolvedValue({});
+
+      const result = await enqueueSbomScan(
+        { fileName: "package.json", content: "{}", userId: "user-1" },
+        options,
+      );
+
+      const addedJobId = mockQueueInstance.add.mock.calls[0][2].jobId as string;
+      expect(await bullmqRejects(addedJobId)).toBeNull();
+      expect(result.jobId).toBe(addedJobId);
+      expect(mockQueueInstance.getJob).toHaveBeenCalledWith(addedJobId);
     });
   });
 

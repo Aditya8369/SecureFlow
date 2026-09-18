@@ -31,6 +31,20 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("octokit", () => {
   return {
     Octokit: class MockOctokit {
+      // GitHub's page walk: request pages until one comes back short.
+      paginate = {
+        iterator: async function* (
+          route: (params: Record<string, unknown>) => Promise<{ data: unknown[] }>,
+          params: Record<string, unknown>,
+        ) {
+          const perPage = (params.per_page as number | undefined) ?? 30;
+          for (let page = 1; ; page++) {
+            const response = await route({ ...params, page });
+            yield response;
+            if (response.data.length < perPage) return;
+          }
+        },
+      };
       rest = {
         pulls: {
           listFiles: mockOctokitListFiles,
@@ -571,7 +585,7 @@ describe("GitHub webhook route", () => {
         }),
         expect.objectContaining({
           dedupeKey: "webhook:repo-uuid-1:pr-uuid-1:commit-sha-123:package.json",
-          jobId: "sbom:repo-uuid-1-pr-uuid-1-commit-sha-123-package_json",
+          jobId: "sbom-repo-uuid-1-pr-uuid-1-commit-sha-123-package_json",
           deliveryId: "delivery-uuid-99",
         }),
       );
@@ -582,6 +596,27 @@ describe("GitHub webhook route", () => {
       expect(callData.userId).toBe("user-real-owner");
     });
 
+    it("finds a manifest past the first page of changed files", async () => {
+      // 45 changed files, the manifest last. GitHub pages this endpoint 30 at a
+      // time unless asked for more, and a request without `page` is page 1.
+      const changed = [
+        ...Array.from({ length: 44 }, (_, i) => ({ filename: `src/file-${i}.ts` })),
+        { filename: "package.json" },
+      ];
+      mockOctokitListFiles.mockImplementation(
+        async ({ page = 1, per_page = 30 }: { page?: number; per_page?: number }) => ({
+          data: changed.slice((page - 1) * per_page, page * per_page),
+        }),
+      );
+
+      await handlePullRequestSynchronize(syncPayload, "delivery-uuid-99");
+
+      expect(mockEnqueueSbomScan).toHaveBeenCalledWith(
+        expect.objectContaining({ fileName: "package.json" }),
+        expect.anything(),
+      );
+    });
+
     it("skips SBOM enqueue when repository cannot be resolved in SecureFlow database", async () => {
       mockPrismaRepo.findUnique.mockResolvedValue(null);
 
@@ -589,6 +624,36 @@ describe("GitHub webhook route", () => {
 
       expect(mockEnqueueSbomScan).not.toHaveBeenCalled();
       expect(mockPrismaPR.upsert).not.toHaveBeenCalled();
+    });
+
+    it("reads manifests at the PR's head commit, not by branch name on the base repository", async () => {
+      // A pull request from a fork whose branch is also called `main`. The base
+      // repository's `main` has an older manifest; the PR's commit has the new one.
+      const forkPayload = {
+        ...syncPayload,
+        pull_request: {
+          ...syncPayload.pull_request,
+          head: {
+            sha: "fork-head-sha",
+            ref: "main",
+            repo: { full_name: "contributor/test-app" },
+          },
+        },
+      };
+      const encode = (deps: Record<string, string>) => ({
+        data: { content: Buffer.from(JSON.stringify({ dependencies: deps })).toString("base64") },
+      });
+      mockOctokitGetContent.mockImplementation(async ({ ref }: { ref: string }) =>
+        ref === "fork-head-sha" ? encode({ lodash: "4.17.20" }) : encode({ lodash: "4.17.21" }),
+      );
+
+      await handlePullRequestSynchronize(forkPayload, "delivery-uuid-99");
+
+      expect(mockOctokitGetContent).toHaveBeenCalledWith(
+        expect.objectContaining({ owner: "acme", repo: "test-app", ref: "fork-head-sha" }),
+      );
+      const { content } = mockEnqueueSbomScan.mock.calls[0][0];
+      expect(JSON.parse(content).dependencies.lodash).toBe("4.17.20");
     });
 
     it("skips SBOM enqueue when repository has no owner (empty userId)", async () => {
@@ -621,6 +686,12 @@ describe("GitHub webhook route", () => {
       expect(firstOptions.dedupeKey).toBe(
         "webhook:repo-uuid-1:pr-uuid-1:commit-sha-123:package.json",
       );
+    });
+
+    it("passes a job id without `:`, which BullMQ rejects as a custom id", async () => {
+      await handlePullRequestSynchronize(syncPayload, "delivery-uuid-99");
+
+      expect(mockEnqueueSbomScan.mock.calls[0][1].jobId).not.toContain(":");
     });
   });
 });

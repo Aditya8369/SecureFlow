@@ -76,6 +76,46 @@ describe("POST /api/findings/bulk-remediate (#814)", () => {
     expect(data.error).toMatch(/access is denied/i);
   });
 
+  it("treats a repeated id as one finding instead of denying access", async () => {
+    findingFindMany.mockResolvedValue([
+      { id: "f-1", type: "SECRET", fileLocation: "src/keys.ts", codeSnippet: "k" },
+    ]);
+    generatePatchMock.mockResolvedValue({ patchDiff: "--- a/src/keys.ts", explanation: "e" });
+    patchUpsert.mockResolvedValue({ findingId: "f-1", patchDiff: "--- a/src/keys.ts" });
+
+    const res = await POST(makeRequest({ findingIds: ["f-1", "f-1"] }));
+
+    expect(res.status).toBe(200);
+    expect(findingFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: { in: ["f-1"] } }),
+      }),
+    );
+    expect(generatePatchMock).toHaveBeenCalledTimes(1);
+    expect((await res.json()).count).toBe(1);
+  });
+
+  it("rejects more findings than one page of the dashboard can select, before any lookup", async () => {
+    const findingIds = Array.from({ length: 101 }, (_, i) => `f-${i}`);
+
+    const res = await POST(makeRequest({ findingIds }));
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/at most 100/);
+    expect(findingFindMany).not.toHaveBeenCalled();
+    expect(generatePatchMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts a full page of findings", async () => {
+    const findingIds = Array.from({ length: 100 }, (_, i) => `f-${i}`);
+    findingFindMany.mockResolvedValue([]);
+
+    const res = await POST(makeRequest({ findingIds }));
+
+    expect(res.status).toBe(404);
+    expect(findingFindMany).toHaveBeenCalled();
+  });
+
   it("returns 400 and rejects mixed vulnerability types", async () => {
     findingFindMany.mockResolvedValue([
       { id: "f-1", type: "SECRET", fileLocation: "src/keys.ts" },

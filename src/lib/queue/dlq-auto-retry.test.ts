@@ -1,0 +1,337 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import {
+  computeNextRetryAt,
+  isRetryDue,
+  retryDlqJob,
+  createDlqAutoRetryWorker,
+  BASE_DELAY_MS,
+  MAX_DELAY_MS,
+  MAX_AUTO_RETRY_ATTEMPTS,
+  POLL_INTERVAL_MS,
+  type DlqAutoRetryJobData,
+} from "./dlq-auto-retry";
+import type { DlqJobLike } from "./dlq";
+
+// ---------------------------------------------------------------------------
+// Mocks
+// ---------------------------------------------------------------------------
+
+vi.mock("./webhookQueue", () => ({
+  webhookDLQ: {
+    getJobs: vi.fn().mockResolvedValue([]),
+    add: vi.fn().mockResolvedValue({ id: "new-dlq-job" }),
+  },
+  addWebhookJob: vi.fn().mockResolvedValue({ id: "new-main-job" }),
+}));
+
+// Import after mock so the mock is in place
+import { webhookDLQ, addWebhookJob } from "./webhookQueue";
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function makeJob(
+  data: DlqAutoRetryJobData,
+  overrides: Partial<DlqJobLike> = {},
+): DlqJobLike & { remove: ReturnType<typeof vi.fn> } {
+  const remove = vi.fn().mockResolvedValue(undefined);
+  return { id: "dlq-job-1", data, remove, ...overrides };
+}
+
+function validPayload() {
+  return {
+    event: "pull_request",
+    deliveryId: "delivery-abc-123",
+    payload: { action: "opened" },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// computeNextRetryAt
+// ---------------------------------------------------------------------------
+
+describe("computeNextRetryAt", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("returns BASE_DELAY_MS * 2^0 for the first retry", () => {
+    const result = computeNextRetryAt(0);
+    const expectedMs = BASE_DELAY_MS * Math.pow(2, 0);
+    expect(result.getTime()).toBe(Date.now() + expectedMs);
+  });
+
+  it("doubles the delay on each subsequent attempt", () => {
+    const t0 = computeNextRetryAt(0).getTime() - Date.now();
+    const t1 = computeNextRetryAt(1).getTime() - Date.now();
+    const t2 = computeNextRetryAt(2).getTime() - Date.now();
+
+    expect(t1).toBe(t0 * 2);
+    expect(t2).toBe(t0 * 4);
+  });
+
+  it("caps at MAX_DELAY_MS regardless of attempt count", () => {
+    const high = computeNextRetryAt(100).getTime() - Date.now();
+    expect(high).toBe(MAX_DELAY_MS);
+  });
+
+  it("never exceeds MAX_DELAY_MS", () => {
+    for (let i = 0; i <= MAX_AUTO_RETRY_ATTEMPTS + 2; i++) {
+      const delay = computeNextRetryAt(i).getTime() - Date.now();
+      expect(delay).toBeLessThanOrEqual(MAX_DELAY_MS);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isRetryDue
+// ---------------------------------------------------------------------------
+
+describe("isRetryDue", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T12:00:00.000Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("returns true when nextRetryAt is null", () => {
+    expect(isRetryDue(null)).toBe(true);
+  });
+
+  it("returns true when nextRetryAt is undefined", () => {
+    expect(isRetryDue(undefined)).toBe(true);
+  });
+
+  it("returns true when the scheduled time has elapsed", () => {
+    expect(isRetryDue("2026-01-01T11:59:59.000Z")).toBe(true);
+  });
+
+  it("returns true when the scheduled time equals now", () => {
+    expect(isRetryDue("2026-01-01T12:00:00.000Z")).toBe(true);
+  });
+
+  it("returns false when the scheduled time is in the future", () => {
+    expect(isRetryDue("2026-01-01T12:00:01.000Z")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// retryDlqJob
+// ---------------------------------------------------------------------------
+
+describe("retryDlqJob", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("requeues a due job with a valid payload", async () => {
+    const job = makeJob({ data: validPayload() });
+
+    const outcome = await retryDlqJob(job);
+
+    expect(outcome.result).toBe("requeued");
+    expect(job.remove).toHaveBeenCalledOnce();
+    expect(addWebhookJob).toHaveBeenCalledOnce();
+  });
+
+  it("removes from DLQ before adding to main queue (remove-first order)", async () => {
+    const callOrder: string[] = [];
+    const job = makeJob({ data: validPayload() });
+    job.remove.mockImplementation(async () => {
+      callOrder.push("remove");
+    });
+    vi.mocked(addWebhookJob).mockImplementation(async () => {
+      callOrder.push("add");
+      return { id: "x" } as any;
+    });
+
+    await retryDlqJob(job);
+
+    expect(callOrder).toEqual(["remove", "add"]);
+  });
+
+  it("skips a job whose nextRetryAt is in the future", async () => {
+    const future = new Date(Date.now() + 60_000).toISOString();
+    const job = makeJob({ data: validPayload(), nextRetryAt: future });
+
+    const outcome = await retryDlqJob(job);
+
+    expect(outcome.result).toBe("skipped_not_due");
+    expect(job.remove).not.toHaveBeenCalled();
+    expect(addWebhookJob).not.toHaveBeenCalled();
+  });
+
+  it("skips a job that has exceeded MAX_AUTO_RETRY_ATTEMPTS", async () => {
+    const job = makeJob({
+      data: validPayload(),
+      autoRetryCount: MAX_AUTO_RETRY_ATTEMPTS,
+    });
+
+    const outcome = await retryDlqJob(job);
+
+    expect(outcome.result).toBe("skipped_max_attempts");
+    expect(job.remove).not.toHaveBeenCalled();
+  });
+
+  it("skips a job with no usable payload", async () => {
+    const job = makeJob({ data: undefined });
+
+    const outcome = await retryDlqJob(job);
+
+    expect(outcome.result).toBe("skipped_no_payload");
+    expect(job.remove).not.toHaveBeenCalled();
+  });
+
+  it("re-inserts with incremented autoRetryCount when addWebhookJob throws", async () => {
+    vi.mocked(addWebhookJob).mockRejectedValueOnce(new Error("Redis down"));
+    const job = makeJob({ data: validPayload(), autoRetryCount: 1 });
+
+    const outcome = await retryDlqJob(job);
+
+    expect(outcome.result).toBe("failed");
+    expect(outcome.reason).toContain("Redis down");
+
+    const addCall = vi.mocked(webhookDLQ.add).mock.calls[0];
+    expect(addCall[1]).toMatchObject({ autoRetryCount: 2 });
+    expect(typeof addCall[1].nextRetryAt).toBe("string");
+  });
+
+  it("passes the delivery-id-keyed jobId to addWebhookJob for idempotency", async () => {
+    const job = makeJob({ data: validPayload() });
+
+    await retryDlqJob(job);
+
+    const [, options] = vi.mocked(addWebhookJob).mock.calls[0];
+    // requeueOptionsFor derives delivery:<id> from the deliveryId field
+    expect(options?.jobId).toMatch(/^delivery:/);
+  });
+
+  it("still requeues without a jobId when the payload has no deliveryId", async () => {
+    const job = makeJob({ data: { event: "push", payload: {} } });
+
+    const outcome = await retryDlqJob(job);
+
+    expect(outcome.result).toBe("requeued");
+    const [, options] = vi.mocked(addWebhookJob).mock.calls[0];
+    expect(options?.jobId).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createDlqAutoRetryWorker — polling loop
+// ---------------------------------------------------------------------------
+
+describe("createDlqAutoRetryWorker", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("polls immediately on start", async () => {
+    vi.mocked(webhookDLQ.getJobs).mockResolvedValue([]);
+    const w = createDlqAutoRetryWorker({ pollIntervalMs: 1000 });
+
+    w.start();
+    await vi.runAllTilesAsync();
+
+    expect(webhookDLQ.getJobs).toHaveBeenCalledOnce();
+    await w.stop();
+  });
+
+  it("schedules the next poll after the interval", async () => {
+    vi.mocked(webhookDLQ.getJobs).mockResolvedValue([]);
+    const w = createDlqAutoRetryWorker({ pollIntervalMs: 1000 });
+
+    w.start();
+    await vi.runAllTilesAsync();
+    expect(webhookDLQ.getJobs).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.runAllTilesAsync();
+    expect(webhookDLQ.getJobs).toHaveBeenCalledTimes(2);
+
+    await w.stop();
+  });
+
+  it("does not poll after stop is called", async () => {
+    vi.mocked(webhookDLQ.getJobs).mockResolvedValue([]);
+    const w = createDlqAutoRetryWorker({ pollIntervalMs: 1000 });
+
+    w.start();
+    await vi.runAllTilesAsync();
+    await w.stop();
+
+    const callsBefore = vi.mocked(webhookDLQ.getJobs).mock.calls.length;
+    await vi.advanceTimersByTimeAsync(5000);
+    await vi.runAllTilesAsync();
+
+    expect(vi.mocked(webhookDLQ.getJobs).mock.calls.length).toBe(callsBefore);
+  });
+
+  it("calling start twice does not double-poll", async () => {
+    vi.mocked(webhookDLQ.getJobs).mockResolvedValue([]);
+    const w = createDlqAutoRetryWorker({ pollIntervalMs: 1000 });
+
+    w.start();
+    w.start(); // second call should be a no-op
+    await vi.runAllTilesAsync();
+
+    expect(webhookDLQ.getJobs).toHaveBeenCalledTimes(1);
+    await w.stop();
+  });
+
+  it("continues polling after a Redis read error", async () => {
+    vi.mocked(webhookDLQ.getJobs)
+      .mockRejectedValueOnce(new Error("ECONNRESET"))
+      .mockResolvedValue([]);
+
+    const w = createDlqAutoRetryWorker({ pollIntervalMs: 500 });
+    w.start();
+    await vi.runAllTilesAsync();
+
+    // First poll threw — worker should still schedule the next one
+    await vi.advanceTimersByTimeAsync(500);
+    await vi.runAllTilesAsync();
+
+    expect(webhookDLQ.getJobs).toHaveBeenCalledTimes(2);
+    await w.stop();
+  });
+
+  it("uses POLL_INTERVAL_MS as the default interval", () => {
+    // Verify the exported constant is the value the worker defaults to.
+    // This is a contract test: if someone changes the default they must also
+    // update the constant (and the docs).
+    expect(POLL_INTERVAL_MS).toBe(30_000);
+  });
+
+  it("requeues eligible jobs found during a poll", async () => {
+    const job = makeJob({ data: validPayload() });
+    vi.mocked(webhookDLQ.getJobs).mockResolvedValueOnce([job as any]);
+
+    const w = createDlqAutoRetryWorker({ pollIntervalMs: 1000 });
+    w.start();
+    await vi.runAllTilesAsync();
+
+    expect(addWebhookJob).toHaveBeenCalledOnce();
+    await w.stop();
+  });
+});

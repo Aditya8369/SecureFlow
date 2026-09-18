@@ -16,6 +16,7 @@ import {
 import prisma from "@/lib/prisma";
 import { Octokit } from "octokit";
 import { enqueueSbomScan } from "@/lib/queue/sbomQueue";
+import { fetchPullRequestFiles } from "@/lib/github/pull-request-files";
 import { env } from "@/lib/env";
 
 /**
@@ -116,12 +117,26 @@ export async function handlePullRequestSynchronize(
     const owner = repository.owner.login;
     const repo = repository.name;
 
-    // 3. Get changed files
-    const { data: files } = await octokit.rest.pulls.listFiles({
-      owner,
-      repo,
-      pull_number: pull_request.number,
-    });
+    // 3. Get changed files. Paginated: a bare `pulls.listFiles` call returns
+    // only GitHub's first page of 30, so a manifest further down a larger pull
+    // request was never scanned. The worker's PR scan already reads files
+    // through this helper for the same reason.
+    const { files, truncated, fetched, totalChanged } = await fetchPullRequestFiles(
+      octokit as never,
+      {
+        owner,
+        repo,
+        pullNumber: pull_request.number,
+        changedFiles:
+          typeof pull_request.changed_files === "number" ? pull_request.changed_files : null,
+      },
+    );
+
+    if (truncated) {
+      console.warn(
+        `[SBOM] PR #${pull_request.number} changed ${totalChanged ?? "more than " + fetched} files; checking manifests in the first ${fetched} only.`,
+      );
+    }
 
     // 4. SBOM Dependency Scan Integration
     console.log(`[SBOM] Checking ${files.length} files for manifests...`);
@@ -131,19 +146,25 @@ export async function handlePullRequestSynchronize(
       if (file.filename.endsWith("package.json") || file.filename.endsWith("requirements.txt")) {
         console.log(`[SBOM] Detected manifest: ${file.filename}`);
 
-        // Fetch content (using PR head ref to get the version being merged)
+        // Fetch the manifest at the PR's head commit. `head.ref` is a branch
+        // name in the head repository: for a pull request from a fork that
+        // branch does not exist on the base repository queried here (the fetch
+        // 404s and the manifest is skipped), or it names an unrelated base
+        // branch such as `main` and the wrong file is scanned. It is also a
+        // moving target, while the dedupe key below is tied to `headSha`.
+        // GitHub serves a pull request's head commit from the base repository.
         const content = await fetchFileContent(
           octokit,
           owner,
           repo,
           file.filename,
-          pull_request.head.ref,
+          headSha || pull_request.head.ref,
         );
 
         if (content) {
           // Derive deterministic deduplication key based on repo + PR + commit + filename
           const dedupeKey = `webhook:${dbRepo.id}:${dbPr.id}:${headSha || "head"}:${file.filename}`;
-          const jobId = `sbom:${dbRepo.id}-${dbPr.id}-${headSha || "head"}-${file.filename.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+          const jobId = `sbom-${dbRepo.id}-${dbPr.id}-${headSha || "head"}-${file.filename.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
 
           // Offload SBOM dependency scan to background queue (#809)
           await enqueueSbomScan(

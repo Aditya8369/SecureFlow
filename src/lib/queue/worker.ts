@@ -663,10 +663,12 @@ export const worker = new Worker<WebhookJobData>(
         // Scanning only. This function posts its own check run and pull request
         // comment below, writes its own AuditLog row and creates its own
         // ScanResult, so letting the engine do the same would duplicate all four
-        // (#747).
+        // (#747). It also requests the AI explanations itself, below, so the
+        // engine must not request them first.
         const scanResult = await processScanJob(scanJobData, undefined, {
           report: false,
           persist: false,
+          enrich: false,
         });
         const findings = scanResult.findings;
 

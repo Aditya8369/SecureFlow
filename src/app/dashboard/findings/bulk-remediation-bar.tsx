@@ -16,6 +16,8 @@ export interface BulkRemediationBarProps {
 interface PatchResponseData {
   patchDiff: string;
   explanation: string;
+  /** The selection the patch was generated for; see `selectionKey`. */
+  selectionKey: string;
 }
 
 export default function BulkRemediationBar({
@@ -24,10 +26,22 @@ export default function BulkRemediationBar({
 }: BulkRemediationBarProps) {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [patchData, setPatchData] = useState<PatchResponseData | null>(null);
+  const [error, setError] = useState<{ message: string; selectionKey: string } | null>(null);
+  const [generatedPatch, setGeneratedPatch] = useState<PatchResponseData | null>(null);
 
   const count = selectedFindings.length;
+
+  // The bar stays mounted while the selection changes, so a patch (or an error)
+  // is only shown for the selection it was produced for. Without this, picking
+  // different findings after generating kept offering the old combined diff for
+  // `git apply`, and a response that landed after the selection changed was
+  // shown against the new one.
+  const selectionKey = useMemo(
+    () => selectedFindings.map((f) => f.id).join(","),
+    [selectedFindings],
+  );
+  const patchData = generatedPatch?.selectionKey === selectionKey ? generatedPatch : null;
+  const errorMessage = error?.selectionKey === selectionKey ? error.message : null;
 
   // Extract unique vulnerability types across selected findings
   const selectedTypes = useMemo(() => {
@@ -52,6 +66,7 @@ export default function BulkRemediationBar({
       return;
     }
 
+    const requestedFor = selectionKey;
     setLoading(true);
     setError(null);
 
@@ -68,7 +83,7 @@ export default function BulkRemediationBar({
 
       if (!res.ok || !data.success) {
         const errorMsg = data.error || "Failed to generate bulk remediation patch.";
-        setError(errorMsg);
+        setError({ message: errorMsg, selectionKey: requestedFor });
         toast({
           variant: "destructive",
           title: "Remediation Failed",
@@ -77,9 +92,10 @@ export default function BulkRemediationBar({
         return;
       }
 
-      setPatchData({
+      setGeneratedPatch({
         patchDiff: data.patch.patchDiff,
         explanation: data.explanation,
+        selectionKey: requestedFor,
       });
 
       toast({
@@ -89,7 +105,7 @@ export default function BulkRemediationBar({
       });
     } catch {
       const errorMsg = "An unexpected error occurred while generating the bulk patch.";
-      setError(errorMsg);
+      setError({ message: errorMsg, selectionKey: requestedFor });
       toast({
         variant: "destructive",
         title: "Remediation Error",
@@ -154,9 +170,9 @@ export default function BulkRemediationBar({
         </p>
       )}
 
-      {error && (
+      {errorMessage && (
         <div className="rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-xs text-red-300">
-          {error}
+          {errorMessage}
         </div>
       )}
 
@@ -190,7 +206,7 @@ export default function BulkRemediationBar({
               variant="ghost"
               size="sm"
               className="h-6 px-2 text-xs"
-              onClick={() => setPatchData(null)}
+              onClick={() => setGeneratedPatch(null)}
             >
               <X className="w-3 h-3 mr-1" />
               Close Diff

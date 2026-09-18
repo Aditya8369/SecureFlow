@@ -12,11 +12,11 @@ import {
   payloadByteLength,
   verifySignature,
   webhookJobId,
-} from '@/lib/github/webhook-verification';
-import prisma from '@/lib/prisma';
-import { Octokit } from 'octokit';
-import { parseManifestFile } from '@/lib/sbom/dependency-parser';
-import { matchVulnerabilities } from '@/lib/sbom/vulnerability-matcher';
+} from "@/lib/github/webhook-verification";
+import prisma from "@/lib/prisma";
+import { Octokit } from "octokit";
+import { parseManifestFile } from "@/lib/sbom/dependency-parser";
+import { matchVulnerabilities } from "@/lib/sbom/vulnerability-matcher";
 import { env } from "@/lib/env";
 
 /**
@@ -198,7 +198,10 @@ const handler = withErrorHandler(async function POST(req: NextRequest) {
   if (isPayloadTooLarge(req.headers.get("content-length"), maxBytes)) {
     throw new AppError("Webhook payload exceeds the configured size limit", 413);
   }
-  const webhookSecret = env.GITHUB_WEBHOOK_SECRET;
+  const webhookSecret = process.env.GITHUB_WEBHOOK_SECRET ?? env.GITHUB_WEBHOOK_SECRET;
+  if (!webhookSecret || !webhookSecret.trim()) {
+    throw new AppError("GITHUB_WEBHOOK_SECRET is not set", 500);
+  }
 
   // 2. Delivery ID, required.
   //
@@ -259,13 +262,6 @@ const handler = withErrorHandler(async function POST(req: NextRequest) {
 
   if (!isTrackedEvent(event)) {
     return NextResponse.json({ message: "Event not tracked", deliveryId }, { status: 200 });
-  }
-
-  // Route event actions
-  if (event === "pull_request" && parsed.payload.action === "synchronize") {
-    await handlePullRequestSynchronize(parsed.payload);
-  } else if (event === "branch_protection_rule") {
-    await handleBranchProtectionMutation(parsed.payload);
   }
 
   // 6. Delegate to the queue.

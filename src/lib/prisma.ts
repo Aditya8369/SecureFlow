@@ -170,8 +170,66 @@ function createMockPrismaClient() {
         if (severity === "LOW") return 8;
         return 15;
       }
-    }
 
+      if (method === "findMany") {
+        return [
+          {
+            id: "finding-1",
+            type: "SECRET",
+            severity: "CRITICAL",
+            fileLocation: "src/config/secrets.ts",
+            lineStart: 10,
+            lineEnd: 10,
+            codeSnippet: "API_SECRET = 'mock-secret'",
+            explanation: "A hardcoded secret was detected.",
+            remediation: "Move the secret to a secure environment variable.",
+            promptInjectionSuspected: false,
+            fingerprint: "mock-fingerprint-1",
+            createdAt: new Date(),
+            scanResult: {
+              pullRequest: {
+                id: "pr-1",
+                number: 42,
+                repositoryId: "repo-1",
+                repository: {
+                  id: "repo-1",
+                  fullName: "mock-owner/mock-repo",
+                },
+              },
+            },
+          },
+
+          {
+            id: "finding-2",
+            // The shape the SBOM worker stores: FindingType has no dependency
+            // member, so a dependency finding is a VULNERABILITY on the
+            // manifest with a "Dependency: name@version" snippet.
+            type: "VULNERABILITY",
+            severity: "HIGH",
+            fileLocation: "package.json",
+            lineStart: null,
+            lineEnd: null,
+            codeSnippet: "Dependency: lodash@4.17.20\nPatched: 4.17.21",
+            explanation: "A dependency with a known vulnerability was detected.",
+            remediation: "Update lodash to version 4.17.21 or higher.",
+            promptInjectionSuspected: false,
+            fingerprint: "mock-fingerprint-2",
+            createdAt: new Date(Date.now() - 1000 * 60 * 10),
+            scanResult: {
+              pullRequest: {
+                id: "pr-1",
+                number: 42,
+                repositoryId: "repo-1",
+                repository: {
+                  id: "repo-1",
+                  fullName: "mock-owner/mock-repo",
+                },
+              },
+            },
+          },
+        ];
+      }
+    }
     if (model === "repository") {
       if (method === "upsert") {
         return {

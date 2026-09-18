@@ -23,9 +23,7 @@ describe("environment validation", () => {
   it("rejects missing required variables", () => {
     const { GROQ_API_KEY, ...missingKey } = validEnv;
 
-    expect(() => validateEnv(missingKey)).toThrow(
-      "Invalid environment variables"
-    );
+    expect(() => validateEnv(missingKey)).toThrow("Invalid environment variables");
   });
 
   it("allows optional variables to be omitted", () => {

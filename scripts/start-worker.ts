@@ -3,6 +3,7 @@ import { outboundWorker } from "../src/lib/queue/outboundWorker";
 import { scanWorkerPool } from "../src/lib/queue/workerPool";
 import { setupWorkerSignalHandlers } from "../src/lib/queue/shutdown";
 import { describeWorkerStartup, planWorkerStartup } from "../src/lib/queue/scan-worker-bootstrap";
+import { createDlqAutoRetryWorker } from "../src/lib/queue/dlq-auto-retry";
 import express from "express";
 
 const app = express();
@@ -35,6 +36,10 @@ if (plan.scanWorkerEnabled) {
   console.log(`🚀 BullMQ Worker (Scans) started with concurrency=${plan.scanConcurrency}`);
 }
 
+const dlqAutoRetryWorker = createDlqAutoRetryWorker();
+dlqAutoRetryWorker.start();
+console.log("🔁 DLQ Auto-Retry Worker started");
+
 const server = app.listen(3000, () => {
   console.log("Worker running on 3000");
   // Stated explicitly: a queue with no consumer looks exactly like a queue with
@@ -47,7 +52,10 @@ setupWorkerSignalHandlers({
   workers: [worker, outboundWorker],
   // `scanWorkerPool` is not a BullMQ `Worker`, so it cannot go in `workers`.
   // Without this a SIGTERM exits with a scan mid-flight still holding its lock.
-  drain: plan.scanWorkerEnabled ? [() => scanWorkerPool.stop()] : [],
+  drain: [
+    ...(plan.scanWorkerEnabled ? [() => scanWorkerPool.stop()] : []),
+    () => dlqAutoRetryWorker.stop(),
+  ],
   timeoutMs: 10000,
   onShutdownComplete: () => {
     server.close();

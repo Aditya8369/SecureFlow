@@ -25,10 +25,11 @@
  * Configuration:
  *
  *   TRUSTED_PROXY_HOP_COUNT  number of trusted proxies in front of the app.
- *                            Default 1 (Vercel, Render, Cloudflare, a single
- *                            nginx). Set to 0 when the app is exposed directly,
- *                            which makes the forwarding headers untrusted
- *                            entirely.
+ *                            Default 0 (secure-by-default). When unset or
+ *                            empty the app is treated as directly exposed and
+ *                            all forwarding headers are ignored. Set to 1 for
+ *                            a single proxy (Vercel, Render, Cloudflare,
+ *                            nginx), or to a higher value for a deeper chain.
  *   TRUSTED_PROXY_IPS        optional comma-separated allowlist of proxy
  *                            addresses / IPv4 CIDRs. When set, the chain is
  *                            walked from the right past known proxies instead of
@@ -254,21 +255,27 @@ export function parseForwardedChain(header: string | null | undefined): string[]
 /**
  * Read and validate `TRUSTED_PROXY_HOP_COUNT`.
  *
- * A malformed value falls back to the safe default of 1 rather than to 0 (which
- * would discard the headers and collapse everyone into one bucket) or to a large
- * number (which would trust the whole chain).
+ * When the variable is absent or empty the function returns 0, which causes
+ * `getClientIp` to ignore all forwarding headers. This is the safe default for
+ * a directly-exposed deployment: without an explicit trusted-proxy
+ * configuration a client-supplied `X-Forwarded-For` must not influence the
+ * rate-limit identity.
+ *
+ * A malformed value (non-integer, negative, or above the chain cap) also falls
+ * back to 0 for the same reason — a misconfigured deployment should fail safe
+ * rather than open.
  */
 export function resolveHopCount(raw: string | undefined): number {
-  if (raw === undefined || raw.trim() === "") return 1;
+  if (raw === undefined || raw.trim() === "") return 0;
 
   const parsed = Number(raw.trim());
-  if (!Number.isInteger(parsed) || parsed < 0 || parsed > MAX_CHAIN_ENTRIES) return 1;
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > MAX_CHAIN_ENTRIES) return 0;
 
   return parsed;
 }
 
 export interface ClientIpOptions {
-  /** Trusted proxies in front of the app. Defaults to `TRUSTED_PROXY_HOP_COUNT`, or 1. */
+  /** Trusted proxies in front of the app. Defaults to `TRUSTED_PROXY_HOP_COUNT`, or 0. */
   trustedHopCount?: number;
   /** Trusted proxy allowlist. Defaults to `TRUSTED_PROXY_IPS`. */
   trustedProxies?: TrustedEntry[];

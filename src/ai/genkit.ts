@@ -1,6 +1,12 @@
 import "dotenv/config";
 import { genkit } from "genkit";
 import { groq, gptOssx20b } from "genkitx-groq";
+import {
+  resolveLocalModelConfig,
+  isLocalModelEnabled,
+  createLocalAiInstance,
+  localModelRef,
+} from "./local-model";
 
 /**
  * ────────────────────────────────────────────────────────────────────────────
@@ -64,6 +70,41 @@ export const ai = genkit({
   plugins: [groq({ apiKey: groqApiKey })],
 });
 
+/**
+ * Return the appropriate Genkit instance for the current environment.
+ *
+ * When `LOCAL_AI_URL` is set, returns a local Ollama-backed instance so no
+ * code is sent to a cloud provider. Falls back to the Groq-backed `ai`
+ * instance otherwise.
+ *
+ * Flows should call this instead of importing `ai` directly so the local-
+ * model flag is respected without any per-flow conditional logic.
+ */
+export function getAiInstance() {
+  const localConfig = resolveLocalModelConfig();
+  if (localConfig) {
+    return createLocalAiInstance(localConfig);
+  }
+  return ai;
+}
+
+/**
+ * Return the model reference string appropriate for the current environment.
+ *
+ * Local mode: `openai/<LOCAL_AI_MODEL>` (routed to Ollama).
+ * Cloud mode: the pinned `gptOssx20b` reference (Groq).
+ */
+export function getDefaultModelRef(): typeof gptOssx20b | string {
+  const localConfig = resolveLocalModelConfig();
+  if (localConfig) {
+    return localModelRef(localConfig);
+  }
+  return securityExplanationModel;
+}
+
+/** Whether the app is currently configured to use a local inference server. */
+export { isLocalModelEnabled };
+
 // ── Default model (app-wide, configurable via GROQ_MODEL) ──────────────────
 //
 // `GROQ_MODEL` (default: `openai/gpt-oss-20b`) is the application-wide
@@ -122,8 +163,16 @@ export const securityExplanationFallbackModels = [
 
 /**
  * Get ordered list of models for resilient failover execution.
+ *
+ * In local mode the chain collapses to a single entry — there is no cloud
+ * fallback when the operator has explicitly opted out of cloud providers.
  */
 export function getSecurityExplanationModelChain(): Array<typeof gptOssx20b | string> {
+  const localConfig = resolveLocalModelConfig();
+  if (localConfig) {
+    return [localModelRef(localConfig)];
+  }
+
   const customFallback = process.env.GROQ_MODEL;
   if (customFallback) {
     return [securityExplanationModel, customFallback, ...securityExplanationFallbackModels];

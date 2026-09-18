@@ -13,6 +13,12 @@ import { developerReceivesAISecurityExplanations } from "@/ai/flows/developer-re
 import { App } from "octokit";
 import { fetchPullRequestFiles, formatCoverageNotice } from "@/lib/github/pull-request-files";
 import {
+  buildSarifDocument,
+  pullRequestRef,
+  uploadSarifAnalysis,
+  type CodeScanningClient,
+} from "@/lib/github/code-scanning";
+import {
   buildPullRequestFacts,
   classifyPullRequestAction,
   pullRequestUpdateData,
@@ -788,6 +794,43 @@ export const worker = new Worker<WebhookJobData>(
               (coverageNotice ? `\n\n${coverageNotice}` : ""),
           },
         });
+
+        // Publish the same findings to GitHub's Code Scanning UI, so they show
+        // up in the PR's "Security" tab without a trip to the dashboard.
+        //
+        // Deliberately after the check run and deliberately unable to fail the
+        // scan: a private repository without Advanced Security answers 403 here,
+        // which says nothing about the code that was just scanned. The upload is
+        // built from `enrichedFindings` (active findings only) so a finding the
+        // user dismissed does not reopen as an alert on the next push.
+        //
+        // The try/catch covers `buildSarifDocument` as well as the upload:
+        // `uploadSarifAnalysis` guards its own request, but the document is
+        // built here, and a throw from it would fail a scan job whose check run
+        // has already been posted — turning a delivered result into a retry.
+        try {
+          const sarifOutcome = await uploadSarifAnalysis(octokit as unknown as CodeScanningClient, {
+            owner: repository.owner.login,
+            repo: repository.name,
+            commitSha: pull_request.head.sha,
+            ref: pullRequestRef(pull_request.number),
+            document: buildSarifDocument(enrichedFindings),
+          });
+
+          const target = `${sanitize(repository.full_name)}#${sanitize(String(pull_request.number))}`;
+
+          console.log(
+            sarifOutcome.status === "uploaded"
+              ? `[Worker] Uploaded SARIF for ${target}`
+              : `[Worker] Skipped SARIF upload for ${target}: ${sanitize(sarifOutcome.reason)}`,
+          );
+        } catch (err) {
+          console.log(
+            `[Worker] SARIF upload errored for ${sanitize(repository.full_name)}: ${sanitize(
+              err instanceof Error ? err.message : String(err),
+            )}`,
+          );
+        }
 
         if (enrichedFindings.length > 0) {
           // Badge rendering comes from `@/lib/severity`. The previous inline

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   computeNextRetryAt,
   isRetryDue,
@@ -31,12 +31,15 @@ import { webhookDLQ, addWebhookJob } from "./webhookQueue";
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeJob(
-  data: DlqAutoRetryJobData,
-  overrides: Partial<DlqJobLike> = {},
-): DlqJobLike & { remove: ReturnType<typeof vi.fn> } {
+function makeJob(data: DlqAutoRetryJobData, overrides: Partial<DlqJobLike> = {}) {
   const remove = vi.fn().mockResolvedValue(undefined);
-  return { id: "dlq-job-1", data, remove, ...overrides };
+
+  return {
+    id: "dlq-job-1",
+    data,
+    remove,
+    ...overrides,
+  } as unknown as DlqJobLike & { remove: ReturnType<typeof vi.fn> };
 }
 
 function validPayload() {
@@ -217,8 +220,8 @@ describe("retryDlqJob", () => {
     await retryDlqJob(job);
 
     const [, options] = vi.mocked(addWebhookJob).mock.calls[0];
-    // requeueOptionsFor derives delivery:<id> from the deliveryId field
-    expect(options?.jobId).toMatch(/^delivery:/);
+    // requeueOptionsFor derives delivery-<id> from the deliveryId field
+    expect(options?.jobId).toMatch(/^delivery-/);
   });
 
   it("still requeues without a jobId when the payload has no deliveryId", async () => {
@@ -251,7 +254,7 @@ describe("createDlqAutoRetryWorker", () => {
     const w = createDlqAutoRetryWorker({ pollIntervalMs: 1000 });
 
     w.start();
-    await vi.runAllTilesAsync();
+    await vi.advanceTimersByTimeAsync(1);
 
     expect(webhookDLQ.getJobs).toHaveBeenCalledOnce();
     await w.stop();
@@ -262,11 +265,10 @@ describe("createDlqAutoRetryWorker", () => {
     const w = createDlqAutoRetryWorker({ pollIntervalMs: 1000 });
 
     w.start();
-    await vi.runAllTilesAsync();
+    await vi.advanceTimersByTimeAsync(1);
     expect(webhookDLQ.getJobs).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(1000);
-    await vi.runAllTilesAsync();
     expect(webhookDLQ.getJobs).toHaveBeenCalledTimes(2);
 
     await w.stop();
@@ -277,12 +279,11 @@ describe("createDlqAutoRetryWorker", () => {
     const w = createDlqAutoRetryWorker({ pollIntervalMs: 1000 });
 
     w.start();
-    await vi.runAllTilesAsync();
+    await vi.advanceTimersByTimeAsync(1);
     await w.stop();
 
     const callsBefore = vi.mocked(webhookDLQ.getJobs).mock.calls.length;
     await vi.advanceTimersByTimeAsync(5000);
-    await vi.runAllTilesAsync();
 
     expect(vi.mocked(webhookDLQ.getJobs).mock.calls.length).toBe(callsBefore);
   });
@@ -293,7 +294,7 @@ describe("createDlqAutoRetryWorker", () => {
 
     w.start();
     w.start(); // second call should be a no-op
-    await vi.runAllTilesAsync();
+    await vi.advanceTimersByTimeAsync(1);
 
     expect(webhookDLQ.getJobs).toHaveBeenCalledTimes(1);
     await w.stop();
@@ -306,11 +307,10 @@ describe("createDlqAutoRetryWorker", () => {
 
     const w = createDlqAutoRetryWorker({ pollIntervalMs: 500 });
     w.start();
-    await vi.runAllTilesAsync();
+    await vi.advanceTimersByTimeAsync(1);
 
     // First poll threw — worker should still schedule the next one
     await vi.advanceTimersByTimeAsync(500);
-    await vi.runAllTilesAsync();
 
     expect(webhookDLQ.getJobs).toHaveBeenCalledTimes(2);
     await w.stop();
@@ -329,7 +329,7 @@ describe("createDlqAutoRetryWorker", () => {
 
     const w = createDlqAutoRetryWorker({ pollIntervalMs: 1000 });
     w.start();
-    await vi.runAllTilesAsync();
+    await vi.advanceTimersByTimeAsync(1);
 
     expect(addWebhookJob).toHaveBeenCalledOnce();
     await w.stop();

@@ -18,12 +18,7 @@
  */
 
 import { webhookDLQ, addWebhookJob } from "./webhookQueue";
-import {
-  extractWebhookPayload,
-  requeueOptionsFor,
-  describeDlqJob,
-  type DlqJobLike,
-} from "./dlq";
+import { extractWebhookPayload, requeueOptionsFor, describeDlqJob, type DlqJobLike } from "./dlq";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger({ context: { component: "dlq-auto-retry" } });

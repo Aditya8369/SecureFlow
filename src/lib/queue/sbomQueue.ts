@@ -10,6 +10,7 @@
  *   const status = await getSbomJobStatus(scanJobId);
  */
 
+import { createHash } from "crypto";
 import { Queue, Job } from "bullmq";
 import { redis } from "./redis";
 import prisma from "@/lib/prisma";
@@ -22,6 +23,28 @@ export const SBOM_DLQ_NAME = "sbom-scans-dlq";
 
 /** Maximum allowed manifest content size (1 MB default). */
 export const MAX_SBOM_BYTES = 1024 * 1024;
+
+/**
+ * Audit action for an enqueued SBOM scan, as it is stored.
+ *
+ * `sanitizeAuditLogInput` upper-cases `action` on write, and Prisma compares
+ * strings case-sensitively, so a lookup must use the stored spelling.
+ */
+export const SBOM_SCAN_ENQUEUED_ACTION = "SBOM SCAN ENQUEUED";
+
+/**
+ * The form of a dedupe key that is written to, and looked up in, audit metadata.
+ *
+ * Audit metadata is sanitized on write, and the secret redaction treats any run
+ * of 40+ base64 characters as a token. The webhook's key contains the 40-character
+ * head SHA, so the raw key was stored as `…:[REDACTED]:package.json` and never
+ * equalled the key being looked up. A SHA-256 hex digest passes through the
+ * sanitizer unchanged (pure hex is kept as a fingerprint) and still distinguishes
+ * one commit from the next.
+ */
+export function sbomDedupeFingerprint(dedupeKey: string): string {
+  return createHash("sha256").update(dedupeKey).digest("hex");
+}
 
 export interface SbomJobData {
   scanJobId: string;
@@ -112,10 +135,10 @@ export async function enqueueSbomScan(
     try {
       const existingAudit = await prisma.auditLog.findFirst({
         where: {
-          action: "SBOM Scan Enqueued",
+          action: SBOM_SCAN_ENQUEUED_ACTION,
           metadata: {
             path: ["dedupeKey"],
-            equals: options.dedupeKey,
+            equals: sbomDedupeFingerprint(options.dedupeKey),
           },
         },
         select: { resource: true, metadata: true },
@@ -157,14 +180,14 @@ export async function enqueueSbomScan(
     await prisma.auditLog.create({
       data: sanitizeAuditLogInput({
         userId: data.userId,
-        action: "SBOM Scan Enqueued",
+        action: SBOM_SCAN_ENQUEUED_ACTION,
         resource: scanJob.id,
         metadata: {
           scanJobId: scanJob.id,
           fileName: data.fileName,
           repositoryId: data.repositoryId ?? null,
           pullRequestId: data.pullRequestId ?? null,
-          dedupeKey: options.dedupeKey ?? null,
+          dedupeKey: options.dedupeKey ? sbomDedupeFingerprint(options.dedupeKey) : null,
           deliveryId: options.deliveryId ?? null,
         },
       }),

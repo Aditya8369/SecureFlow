@@ -64,6 +64,23 @@ describe("escapeCsv", () => {
   it("should wrap values containing carriage returns", () => {
     expect(escapeCsv("line1\rline2")).toBe('"line1\rline2"');
   });
+
+  it.each(["=", "+", "-", "@", "\t", "\r"])(
+    "should neutralise a value starting with the formula trigger %j",
+    (trigger) => {
+      const escaped = escapeCsv(`${trigger}HYPERLINK("http://evil.test")`);
+      // Quoted because the payload contains double quotes; the apostrophe sits inside.
+      expect(escaped.startsWith(`"'${trigger}`)).toBe(true);
+    },
+  );
+
+  it("should neutralise a formula without other special characters", () => {
+    expect(escapeCsv("=1+1")).toBe("'=1+1");
+  });
+
+  it("should not alter a trigger character that is not at the start", () => {
+    expect(escapeCsv("a=b")).toBe("a=b");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -104,6 +121,17 @@ describe("escapeHtml", () => {
 // ---------------------------------------------------------------------------
 
 describe("formatCsv", () => {
+  it("should neutralise formula payloads in file paths and violation text", () => {
+    const csv = formatCsv([
+      {
+        path: "=cmd|' /C calc'!A0.ts",
+        violations: [{ line: 1, text: "@SUM(1+1)*cmd", reason: "environment variable" }],
+      },
+    ]);
+    const row = csv.split("\n")[1];
+    expect(row).toBe("'=cmd|' /C calc'!A0.ts,1,'@SUM(1+1)*cmd,environment variable");
+  });
+
   it("should output correct CSV headers", () => {
     const csv = formatCsv(sampleResults);
     const firstLine = csv.split("\n")[0];

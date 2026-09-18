@@ -571,7 +571,7 @@ describe("GitHub webhook route", () => {
         }),
         expect.objectContaining({
           dedupeKey: "webhook:repo-uuid-1:pr-uuid-1:commit-sha-123:package.json",
-          jobId: "sbom:repo-uuid-1-pr-uuid-1-commit-sha-123-package_json",
+          jobId: "sbom-repo-uuid-1-pr-uuid-1-commit-sha-123-package_json",
           deliveryId: "delivery-uuid-99",
         }),
       );
@@ -621,6 +621,12 @@ describe("GitHub webhook route", () => {
       expect(firstOptions.dedupeKey).toBe(
         "webhook:repo-uuid-1:pr-uuid-1:commit-sha-123:package.json",
       );
+    });
+
+    it("passes a job id without `:`, which BullMQ rejects as a custom id", async () => {
+      await handlePullRequestSynchronize(syncPayload, "delivery-uuid-99");
+
+      expect(mockEnqueueSbomScan.mock.calls[0][1].jobId).not.toContain(":");
     });
   });
 });

@@ -143,7 +143,7 @@ export async function handlePullRequestSynchronize(
         if (content) {
           // Derive deterministic deduplication key based on repo + PR + commit + filename
           const dedupeKey = `webhook:${dbRepo.id}:${dbPr.id}:${headSha || "head"}:${file.filename}`;
-          const jobId = `sbom:${dbRepo.id}-${dbPr.id}-${headSha || "head"}-${file.filename.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+          const jobId = `sbom-${dbRepo.id}-${dbPr.id}-${headSha || "head"}-${file.filename.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
 
           // Offload SBOM dependency scan to background queue (#809)
           await enqueueSbomScan(

@@ -90,7 +90,7 @@ export default {
         return {
           ...token,
           accessToken: refreshedTokens.access_token,
-          accessTokenExpires: Date.now() + refreshedTokens.expires_in * 1000,
+          accessTokenExpires: Date.now() + Number(refreshedTokens.expires_in) * 1000,
           refreshToken: refreshedTokens.refresh_token ?? token.refreshToken,
         };
       } catch (error) {

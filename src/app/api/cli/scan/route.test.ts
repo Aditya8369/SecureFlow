@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 
-const { scanPullRequestMock } = vi.hoisted(() => ({
+const { scanPullRequestMock, rateLimitConfigs } = vi.hoisted(() => ({
   scanPullRequestMock: vi.fn(),
+  rateLimitConfigs: [] as Array<{ keyPrefix: string; fallbackStrategy?: string }>,
 }));
 
 vi.mock("@/lib/armor/scanner", () => ({
@@ -10,7 +11,15 @@ vi.mock("@/lib/armor/scanner", () => ({
 }));
 
 vi.mock("@/lib/middleware/rate-limit", () => ({
-  withRateLimit: <T>(handler: T): T => handler,
+  withRateLimit: <T>(handler: T, config: { keyPrefix: string; fallbackStrategy?: string }): T => {
+    rateLimitConfigs.push(config);
+    return handler;
+  },
+}));
+
+vi.mock("@/lib/middleware/error-handler", () => ({
+  withErrorHandler: (fn: unknown) => fn,
+  AppError: class AppError extends Error {},
 }));
 
 import { POST } from "./route";
@@ -29,6 +38,12 @@ describe("POST /api/cli/scan", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     scanPullRequestMock.mockResolvedValue([]);
+  });
+
+  it("is rate limited under its own fail-closed bucket", () => {
+    const config = rateLimitConfigs.find((c) => c.keyPrefix === "cli:scan");
+    expect(config).toBeDefined();
+    expect(config?.fallbackStrategy).toBe("fail-closed");
   });
 
   it("scans each file as a fully added patch", async () => {

@@ -3,6 +3,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import prisma from "@/lib/prisma";
 import { generateRemediationPatchFlow } from "@/ai/flows/generate-remediation-patch";
+import { MAX_PAGE_SIZE } from "@/lib/findings/query";
+
+/**
+ * Most findings one request may remediate.
+ *
+ * Every finding is a separate AI call, all started at once, while the rate limit
+ * counts the request once. The dashboard can only select findings on the current
+ * page, so a page is the ceiling a real caller reaches.
+ */
+const MAX_BULK_REMEDIATION_FINDINGS = MAX_PAGE_SIZE;
 
 /* POST /api/findings/bulk-remediate */
 const handler = async function POST(req: NextRequest) {
@@ -32,10 +42,22 @@ const handler = async function POST(req: NextRequest) {
       );
     }
 
+    // A repeated id is one finding. `findMany` returns each row once, so
+    // comparing its length against the raw array answered 403 "access is
+    // denied" for a request that only named the same finding twice.
+    const uniqueIds = Array.from(new Set(findingIds as string[]));
+
+    if (uniqueIds.length > MAX_BULK_REMEDIATION_FINDINGS) {
+      return NextResponse.json(
+        { error: `findingIds may contain at most ${MAX_BULK_REMEDIATION_FINDINGS} findings` },
+        { status: 400 },
+      );
+    }
+
     // Load findings owned by the authenticated user
     const findings: any[] = await prisma.finding.findMany({
       where: {
-        id: { in: findingIds },
+        id: { in: uniqueIds },
         scanResult: { pullRequest: { repository: { userId } } },
       },
       include: {
@@ -53,7 +75,7 @@ const handler = async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No matching findings found" }, { status: 404 });
     }
 
-    if (findings.length !== findingIds.length) {
+    if (findings.length !== uniqueIds.length) {
       return NextResponse.json(
         { error: "One or more findings could not be found or access is denied" },
         { status: 403 },

@@ -10,8 +10,12 @@ vi.mock("@/ai/genkit", () => ({
   ai: {
     generate: (...args: unknown[]) => mockGenerate(...args),
   },
+  getAiInstance: () => ({
+    generate: (...args: unknown[]) => mockGenerate(...args),
+  }),
+  getDefaultModelRef: () => "mock-model",
   defaultModel: "mock-model",
-  securityExplanationModel: "mock-groq-model-id", // Added missing export
+  securityExplanationModel: "mock-groq-model-id",
 }));
 
 vi.mock("dotenv/config", () => ({}));

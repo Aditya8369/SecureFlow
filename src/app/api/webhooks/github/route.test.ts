@@ -91,7 +91,8 @@ vi.mock("@/lib/middleware/rateLimit", () => ({
 
 // ---- Imports (after mocks) ----
 
-import { POST, handlePullRequestSynchronize } from "@/app/api/webhooks/github/route";
+import * as webhookRoute from "@/app/api/webhooks/github/route";
+const { POST, handlePullRequestSynchronize } = webhookRoute;
 import { addWebhookJob } from "@/lib/queue/webhookQueue";
 
 // ---- Helpers ----

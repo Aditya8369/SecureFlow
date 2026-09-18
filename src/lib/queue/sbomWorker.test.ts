@@ -491,4 +491,73 @@ describe("sbomWorker", () => {
       );
     });
   });
+
+  describe("retry after a transient failure", () => {
+    /** A ScanJob row that honours the `status` guard on `updateMany`, as Postgres does. */
+    function storeScanJobInMemory(initial: Record<string, unknown>) {
+      const row = { ...initial };
+      mockPrisma.scanJob.findUnique.mockImplementation(async () => ({ ...row }));
+      mockPrisma.scanJob.updateMany.mockImplementation(
+        async ({ where, data }: { where: { status?: string }; data: Record<string, unknown> }) => {
+          if (where.status !== undefined && where.status !== row.status) return { count: 0 };
+          Object.assign(row, data);
+          return { count: 1 };
+        },
+      );
+      mockPrisma.scanJob.update.mockImplementation(
+        async ({ data }: { data: Record<string, unknown> }) => {
+          Object.assign(row, data);
+          return { ...row };
+        },
+      );
+      return row;
+    }
+
+    const jobAttempt = (attemptsMade: number) =>
+      ({
+        id: "job-retry",
+        data: {
+          scanJobId: "sj-retry",
+          fileName: "package.json",
+          content: JSON.stringify({ dependencies: { lodash: "^4.17.20" } }),
+          userId: "user-1",
+          pullRequestId: "pr-retry",
+        },
+        opts: { attempts: 3 },
+        attemptsMade,
+      }) as any;
+
+    it("scans the manifest on the retry instead of reporting it CLEAN", async () => {
+      const row = storeScanJobInMemory({
+        id: "sj-retry",
+        status: "PENDING",
+        pullRequestId: "pr-retry",
+      });
+      mockPrisma.auditLog.create.mockResolvedValue({});
+      mockPrisma.$transaction.mockRejectedValueOnce(new Error("connection reset"));
+
+      await expect(processSbomJob(jobAttempt(0))).rejects.toThrow("connection reset");
+      expect(row.status).toBe("PENDING");
+
+      const result = await processSbomJob(jobAttempt(1));
+
+      expect(result.status).toBe("VULNERABLE");
+      expect(result.totalDependencies).toBe(1);
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(2);
+      expect(row.status).toBe("COMPLETED");
+    });
+
+    it("marks the ScanJob FAILED, not PENDING, when the last attempt fails", async () => {
+      const row = storeScanJobInMemory({
+        id: "sj-retry",
+        status: "PENDING",
+        pullRequestId: "pr-retry",
+      });
+      mockPrisma.$transaction.mockRejectedValueOnce(new Error("connection reset"));
+
+      await expect(processSbomJob(jobAttempt(2))).rejects.toThrow("connection reset");
+
+      expect(row.status).toBe("FAILED");
+    });
+  });
 });

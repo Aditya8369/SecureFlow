@@ -15,14 +15,32 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { withErrorHandler, AppError } from "@/lib/middleware/error-handler";
 import { withRateLimit } from "@/lib/middleware/rate-limit";
 import { scanner, type FileChange } from "@/lib/armor/scanner";
 
-interface CliScanFile {
-  path: string;
-  content: string;
-}
+/**
+ * The request body, checked per entry.
+ *
+ * Only the array itself used to be checked. An entry without `content` (or a
+ * `null` or string entry) reached `content.split` and came back as a 500, and
+ * a numeric or empty `path` was handed to the scanner as a file name. This
+ * route is unauthenticated, so malformed input is the caller's error, not ours.
+ */
+const cliScanRequestSchema = z.object({
+  files: z
+    .array(
+      z.object({
+        path: z
+          .string({ message: "each file needs a non-empty string `path`" })
+          .min(1, "each file needs a non-empty string `path`"),
+        content: z.string({ message: "each file needs a string `content`" }),
+      }),
+      { message: '"files" must be a non-empty array' },
+    )
+    .min(1, '"files" must be a non-empty array'),
+});
 
 /**
  * Wraps full file content as a unified diff whose every line is "added",
@@ -47,10 +65,11 @@ const handler = withErrorHandler(async function POST(req: NextRequest) {
     throw new AppError("Request body is not valid JSON", 400);
   }
 
-  const { files } = body as { files?: CliScanFile[] };
-  if (!Array.isArray(files) || files.length === 0) {
-    throw new AppError('"files" must be a non-empty array', 400);
+  const parsed = cliScanRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    throw new AppError(parsed.error.issues[0]?.message ?? "Invalid scan request", 400);
   }
+  const { files } = parsed.data;
 
   const fileChanges: FileChange[] = files.map((f) => ({
     filename: f.path,

@@ -1,6 +1,12 @@
 import "dotenv/config";
 import { genkit } from "genkit";
 import { groq, gptOssx20b } from "genkitx-groq";
+import {
+  resolveLocalModelConfig,
+  isLocalModelEnabled,
+  createLocalAiInstance,
+  localModelRef,
+} from "./local-model";
 
 /**
  * Configuration options for AI security flow initialization.
@@ -40,6 +46,58 @@ export const ai = genkit({
   model: DEFAULT_SECURITY_CONFIG.modelName,
 });
 
+/**
+ * Return the appropriate Genkit instance for the current environment.
+ *
+ * When `LOCAL_AI_URL` is set, returns a local Ollama-backed instance so no
+ * code is sent to a cloud provider. Falls back to the Groq-backed `ai`
+ * instance otherwise.
+ *
+ * Flows should call this instead of importing `ai` directly so the local-
+ * model flag is respected without any per-flow conditional logic.
+ */
+export function getAiInstance() {
+  const localConfig = resolveLocalModelConfig();
+  if (localConfig) {
+    return createLocalAiInstance(localConfig);
+  }
+  return ai;
+}
+
+/**
+ * Return the model reference string appropriate for the current environment.
+ *
+ * Local mode: `openai/<LOCAL_AI_MODEL>` (routed to Ollama).
+ * Cloud mode: the pinned `gptOssx20b` reference (Groq).
+ */
+export function getDefaultModelRef(): typeof gptOssx20b | string {
+  const localConfig = resolveLocalModelConfig();
+  if (localConfig) {
+    return localModelRef(localConfig);
+  }
+  return securityExplanationModel;
+}
+
+/** Whether the app is currently configured to use a local inference server. */
+export { isLocalModelEnabled };
+
+// ── Default model (app-wide, configurable via GROQ_MODEL) ──────────────────
+//
+// `GROQ_MODEL` (default: `openai/gpt-oss-20b`) is the application-wide
+// default used by flows that don't need a specific model (e.g. the heist-
+// message flow, which benefits from a slightly larger model for prose
+// quality and is not latency-critical).
+//
+// Groq deprecated `llama-3.1-8b-instant` on 2026-06-17 in favour of
+// `openai/gpt-oss-20b` (see https://console.groq.com/docs/deprecations).
+// `gpt-oss-20b` is Groq's current recommended default for general-purpose
+// low-latency inference. Override via `GROQ_MODEL` if your account still
+// has access to a deprecated model.
+const GROQ_MODEL = process.env.GROQ_MODEL ?? "openai/gpt-oss-20b";
+
+/** Model reference flows should use unless they need to override it explicitly. */
+export const defaultModel = `groq/${GROQ_MODEL}`;
+
 export const availableGroqModels = [
   "groq/llama-3.1-8b-instant",
   "groq/llama-3.1-70b-versatile",
@@ -56,7 +114,18 @@ export const securityExplanationFallbackModels = [
   "groq/mixtral-8x7b-32768",
 ] as const;
 
+/**
+ * Get ordered list of models for resilient failover execution.
+ *
+ * In local mode the chain collapses to a single entry — there is no cloud
+ * fallback when the operator has explicitly opted out of cloud providers.
+ */
 export function getSecurityExplanationModelChain(): Array<typeof gptOssx20b | string> {
+  const localConfig = resolveLocalModelConfig();
+  if (localConfig) {
+    return [localModelRef(localConfig)];
+  }
+
   const customFallback = configuredGroqModel();
   if (customFallback) {
     return [customFallback, securityExplanationModel, ...securityExplanationFallbackModels];

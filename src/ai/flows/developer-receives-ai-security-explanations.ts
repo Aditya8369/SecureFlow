@@ -8,7 +8,7 @@ import {
   isTimeoutError,
   withRetry,
 } from "./security-helpers";
-import { ai, securityExplanationModel } from "@/ai/genkit";
+import { ai, defaultModel, securityExplanationModel, getAiInstance, getDefaultModelRef } from "@/ai/genkit";
 import {
   AISecurityExplanationInputSchema,
   AISecurityExplanationOutputSchema,
@@ -42,11 +42,15 @@ export async function developerReceivesAISecurityExplanations(
   let parsedContent: { explanation?: string; remediationSuggestions?: string } | undefined;
 
   try {
-    // Explicitly route to the fastest Groq model with retry logic for rate limits and timeouts.
+    // Route to local model when LOCAL_AI_URL is set, otherwise use the pinned
+    // fast Groq model. Retry logic and fallback chain are preserved for cloud
+    // mode; local mode uses a single model (no cloud fallback by design).
+    const activeAi = getAiInstance();
+    const activeModel = getDefaultModelRef();
     const res = await withRetry(
       () =>
-        ai.generate({
-          model: securityExplanationModel,
+        activeAi.generate({
+          model: activeModel as any,
           system: SYSTEM_PROMPT,
           prompt,
           config: {

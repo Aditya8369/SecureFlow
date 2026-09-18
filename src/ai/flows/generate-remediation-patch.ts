@@ -1,7 +1,5 @@
 import { z } from "genkit";
-
-import { ai, securityExplanationModel } from "@/ai/genkit";
-
+import { ai, getAiInstance, getDefaultModelRef, securityExplanationModel } from "@/ai/genkit";
 // Use z.object() to create a standard Zod schema
 
 const PatchOutputSchema = z.object({
@@ -26,6 +24,8 @@ export const generateRemediationPatchFlow = ai.defineFlow(
     outputSchema: PatchOutputSchema,
   },
   async (input) => {
+    const activeAi = getAiInstance();
+    const activeModel = getDefaultModelRef();
     const prompt = `
 You are an expert security engineer. Your task is to generate a unified diff patch to fix the following security vulnerability.
 
@@ -43,9 +43,9 @@ Provide ONLY the unified diff patch that fixes this issue securely. Do not inclu
 
 `;
 
-    try {
-      const { output } = await ai.generate({
-        model: securityExplanationModel,
+try {
+      const { output } = await activeAi.generate({
+        model: activeModel as any,
         prompt: prompt,
         output: { schema: PatchOutputSchema, format: "json" },
       });

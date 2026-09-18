@@ -12,6 +12,28 @@ import {
 const VERBOSE = process.argv.includes("--verbose");
 const NO_AI = process.argv.includes("--no-ai");
 
+/**
+ * --local flag: route AI calls to a local Ollama instance instead of Groq.
+ *
+ * Sets LOCAL_AI_URL before any AI module is imported so the env var is
+ * visible to getAiInstance() / resolveLocalModelConfig() in genkit.ts.
+ * The model can be overridden with --local-model <tag> (default: llama3).
+ */
+const LOCAL_FLAG = process.argv.includes("--local");
+if (LOCAL_FLAG) {
+  const localFlagIndex = process.argv.findIndex((a) => a === "--local");
+  const nextArg = process.argv[localFlagIndex + 1];
+  
+  // Check if the argument after --local is a URL (starts with http:// or https://)
+  const customUrl = nextArg && (nextArg.startsWith("http://") || nextArg.startsWith("https://")) ? nextArg : undefined;
+
+  const modelIdx = process.argv.findIndex((a) => a === "--local-model");
+  const localModel = modelIdx !== -1 ? process.argv[modelIdx + 1] : undefined;
+
+  process.env.LOCAL_AI_URL = customUrl || process.env.LOCAL_AI_URL || "http://localhost:11434/v1";
+  if (localModel) process.env.LOCAL_AI_MODEL = localModel;
+}
+
 function parseFormatArg(): OutputFormat {
   const formatIndex = process.argv.findIndex((arg) => arg === "--format");
   if (formatIndex !== -1) {

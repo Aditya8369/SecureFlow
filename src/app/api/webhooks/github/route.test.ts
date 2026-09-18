@@ -626,6 +626,36 @@ describe("GitHub webhook route", () => {
       expect(mockPrismaPR.upsert).not.toHaveBeenCalled();
     });
 
+    it("reads manifests at the PR's head commit, not by branch name on the base repository", async () => {
+      // A pull request from a fork whose branch is also called `main`. The base
+      // repository's `main` has an older manifest; the PR's commit has the new one.
+      const forkPayload = {
+        ...syncPayload,
+        pull_request: {
+          ...syncPayload.pull_request,
+          head: {
+            sha: "fork-head-sha",
+            ref: "main",
+            repo: { full_name: "contributor/test-app" },
+          },
+        },
+      };
+      const encode = (deps: Record<string, string>) => ({
+        data: { content: Buffer.from(JSON.stringify({ dependencies: deps })).toString("base64") },
+      });
+      mockOctokitGetContent.mockImplementation(async ({ ref }: { ref: string }) =>
+        ref === "fork-head-sha" ? encode({ lodash: "4.17.20" }) : encode({ lodash: "4.17.21" }),
+      );
+
+      await handlePullRequestSynchronize(forkPayload, "delivery-uuid-99");
+
+      expect(mockOctokitGetContent).toHaveBeenCalledWith(
+        expect.objectContaining({ owner: "acme", repo: "test-app", ref: "fork-head-sha" }),
+      );
+      const { content } = mockEnqueueSbomScan.mock.calls[0][0];
+      expect(JSON.parse(content).dependencies.lodash).toBe("4.17.20");
+    });
+
     it("skips SBOM enqueue when repository has no owner (empty userId)", async () => {
       mockPrismaRepo.findUnique.mockResolvedValue({
         id: "repo-uuid-orphan",

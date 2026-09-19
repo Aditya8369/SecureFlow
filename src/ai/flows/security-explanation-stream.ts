@@ -13,9 +13,6 @@ import {
 } from "./security-explanation-schemas";
 
 
-const groq = new Groq({ apiKey: env.GROQ_API_KEY });
-
-
 interface StreamOptions {
   vulnerabilityId: string;
   sourceCode: string;

@@ -17,11 +17,11 @@ vi.mock("genkit", () => ({
 }));
 
 vi.mock("@genkit-ai/compat-oai", () => ({
-  openAI: vi.fn().mockReturnValue({ id: "mock-openai-plugin" }),
+  openAICompatible: vi.fn().mockReturnValue({ id: "mock-openai-plugin" }),
 }));
 
 import { genkit } from "genkit";
-import { openAI } from "@genkit-ai/compat-oai";
+import { openAICompatible } from "@genkit-ai/compat-oai";
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -116,11 +116,11 @@ describe("localModelRef", () => {
 // ---------------------------------------------------------------------------
 
 describe("createLocalAiInstance", () => {
-  it("calls genkit() with the openAI plugin", () => {
+  it("calls genkit() with the OpenAI-compatible plugin", () => {
     createLocalAiInstance({ baseUrl: "http://localhost:11434/v1", model: "llama3" });
 
-    expect(openAI).toHaveBeenCalledOnce();
-    expect(openAI).toHaveBeenCalledWith(
+    expect(openAICompatible).toHaveBeenCalledOnce();
+    expect(openAICompatible).toHaveBeenCalledWith(
       expect.objectContaining({ baseURL: "http://localhost:11434/v1" }),
     );
     expect(genkit).toHaveBeenCalledOnce();
@@ -129,7 +129,7 @@ describe("createLocalAiInstance", () => {
   it("uses a placeholder API key (not a real credential)", () => {
     createLocalAiInstance({ baseUrl: "http://localhost:11434/v1", model: "llama3" });
 
-    const pluginArgs = vi.mocked(openAI).mock.calls[0][0] as { apiKey: string };
+    const pluginArgs = vi.mocked(openAICompatible).mock.calls[0][0] as { apiKey: string };
     // Must be a non-empty placeholder, not a real key pattern
     expect(pluginArgs.apiKey).toBe("local");
   });
@@ -138,7 +138,7 @@ describe("createLocalAiInstance", () => {
     const customUrl = "http://10.0.0.5:11434/v1";
     createLocalAiInstance({ baseUrl: customUrl, model: "mistral" });
 
-    const pluginArgs = vi.mocked(openAI).mock.calls[0][0] as { baseURL: string };
+    const pluginArgs = vi.mocked(openAICompatible).mock.calls[0][0] as { baseURL: string };
     expect(pluginArgs.baseURL).toBe(customUrl);
   });
 

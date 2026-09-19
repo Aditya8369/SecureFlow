@@ -21,7 +21,11 @@
  */
 
 import { genkit } from "genkit";
-import { openAI } from "@genkit-ai/compat-oai";
+// The package root exports `openAICompatible`, not `openAI`: a named `openAI`
+// import from it is `undefined` at runtime. The real `openAI` plugin (on the
+// `/openai` subpath) is no use here either — it drops `baseURL` from its options
+// and only knows OpenAI's own model list.
+import { openAICompatible } from "@genkit-ai/compat-oai";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -47,7 +51,7 @@ export interface LocalModelConfig {
  * Both have sensible defaults so the only required variable is `LOCAL_AI_URL`.
  */
 export function resolveLocalModelConfig(
-  env: NodeJS.ProcessEnv = process.env,
+  env: Readonly<Record<string, string | undefined>> = process.env,
 ): LocalModelConfig | null {
   const baseUrl = env.LOCAL_AI_URL?.trim();
   if (!baseUrl) return null;
@@ -64,7 +68,9 @@ export function resolveLocalModelConfig(
  * True when `LOCAL_AI_URL` is set in the environment. Used by flows to decide
  * which Genkit instance and model reference to use.
  */
-export function isLocalModelEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+export function isLocalModelEnabled(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
   return resolveLocalModelConfig(env) !== null;
 }
 
@@ -85,7 +91,9 @@ export function isLocalModelEnabled(env: NodeJS.ProcessEnv = process.env): boole
 export function createLocalAiInstance(config: LocalModelConfig) {
   return genkit({
     plugins: [
-      openAI({
+      openAICompatible({
+        // Kept as "openai" so model refs stay `openai/<model>` (localModelRef).
+        name: "openai",
         baseURL: config.baseUrl,
         // Ollama does not require an API key but the plugin requires a non-empty
         // string. A placeholder satisfies the type without sending credentials.

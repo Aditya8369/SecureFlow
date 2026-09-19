@@ -41,7 +41,7 @@ sbomWorker.on("error", (err) => {
 // `enqueueScan` — and no consumer, so every job it enqueued sat in Redis while
 // its ScanJob row stayed PENDING forever (#750).
 if (plan.scanWorkerEnabled) {
-  scanWorkerPool.start();
+  scanWorkerPool.start(plan.scanConcurrency ?? undefined);
   console.log(`🚀 BullMQ Worker (Scans) started with concurrency=${plan.scanConcurrency}`);
 }
 

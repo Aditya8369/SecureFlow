@@ -105,13 +105,32 @@ const handler = withErrorHandler(async function POST(req: NextRequest) {
 
   // Read the raw text so the signature is verified over the exact bytes sent,
   // before anything parses them.
-  const rawPayloadText = await req.text();
-
-  // `Content-Length` is attacker-supplied, so the real length is re-checked. A
-  // chunked request legitimately omits the header, which is why the first check
-  // cannot be the only one.
-  if (isPayloadTooLarge(payloadByteLength(rawPayloadText), maxBytes)) {
-    throw new AppError("Webhook payload exceeds the configured size limit", 413);
+  // We stream the body if possible to enforce the size limit on unbounded
+  // chunked requests and prevent memory exhaustion (OOM).
+  let rawPayloadText = "";
+  if (req.body) {
+    let totalBytes = 0;
+    const reader = req.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.length;
+      if (totalBytes > maxBytes) {
+        reader.releaseLock();
+        throw new AppError("Webhook payload exceeds the configured size limit", 413);
+      }
+      rawPayloadText += decoder.decode(value, { stream: true });
+    }
+    rawPayloadText += decoder.decode();
+  } else {
+    rawPayloadText = await req.text();
+    // `Content-Length` is attacker-supplied, so the real length is re-checked. A
+    // chunked request legitimately omits the header, which is why the first check
+    // cannot be the only one.
+    if (isPayloadTooLarge(payloadByteLength(rawPayloadText), maxBytes)) {
+      throw new AppError("Webhook payload exceeds the configured size limit", 413);
+    }
   }
 
   // 4. Signature, before the body is interpreted in any way.

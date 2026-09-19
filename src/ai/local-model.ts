@@ -21,7 +21,7 @@
  */
 
 import { genkit } from "genkit";
-import { openAI } from "@genkit-ai/compat-oai";
+import { openAICompatible } from "@genkit-ai/compat-oai";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -85,7 +85,8 @@ export function isLocalModelEnabled(env: NodeJS.ProcessEnv = process.env): boole
 export function createLocalAiInstance(config: LocalModelConfig) {
   return genkit({
     plugins: [
-      openAI({
+      openAICompatible({
+        name: "openai",
         baseURL: config.baseUrl,
         // Ollama does not require an API key but the plugin requires a non-empty
         // string. A placeholder satisfies the type without sending credentials.

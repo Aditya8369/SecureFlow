@@ -77,6 +77,14 @@ interface SarifResult {
 }
 
 const TOOL_NAME = "SecureFlow";
+
+/**
+ * Reported to GitHub as the analysing tool's version, and shown on the alert.
+ * Kept in step with `package.json` by hand — it is a label, not a dependency,
+ * and importing the manifest into a worker bundle to read one string is a
+ * poor trade.
+ */
+const TOOL_VERSION = "0.1.0";
 const INFORMATION_URI = "https://github.com/GauravKarakoti/SecureFlow";
 
 /**
@@ -157,11 +165,6 @@ function messageFor(finding: CodeScanningFinding, category: FindingCategory): st
   return `SecureFlow flagged a ${category.toLowerCase()} finding here.`;
 }
 
-export interface BuildSarifOptions {
-  /** Version reported as the tool version. */
-  toolVersion?: string;
-}
-
 /**
  * Map server findings onto a SARIF 2.1.0 document.
  *
@@ -169,10 +172,7 @@ export interface BuildSarifOptions {
  * results is how GitHub learns that previously reported alerts are fixed, and
  * skipping it leaves them open forever.
  */
-export function buildSarifDocument(
-  findings: readonly CodeScanningFinding[],
-  options: BuildSarifOptions = {},
-): SarifDocument {
+export function buildSarifDocument(findings: readonly CodeScanningFinding[]): SarifDocument {
   const rules: SarifRule[] = [];
   const ruleIndexById = new Map<string, number>();
   const results: SarifResult[] = [];
@@ -248,7 +248,7 @@ export function buildSarifDocument(
         tool: {
           driver: {
             name: TOOL_NAME,
-            version: options.toolVersion ?? "1.0.0",
+            version: TOOL_VERSION,
             informationUri: INFORMATION_URI,
             rules,
           },

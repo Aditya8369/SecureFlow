@@ -8,15 +8,18 @@ import {
   type AiFinding,
   type StagedFileForAiScan,
 } from "./lib/api-client.js";
+import { hostedAiScanSkipReason } from "./lib/local-mode.js";
 
 const VERBOSE = process.argv.includes("--verbose");
-const NO_AI = process.argv.includes("--no-ai");
+const AI_SKIP_REASON = hostedAiScanSkipReason(process.argv);
 
 /**
- * --local flag: route AI calls to a local Ollama instance instead of Groq.
+ * --local flag: keep staged code on this machine (#892).
  *
- * Sets LOCAL_AI_URL before any AI module is imported so the env var is
- * visible to getAiInstance() / resolveLocalModelConfig() in genkit.ts.
+ * The hosted AI pass is skipped (see hostedAiScanSkipReason), because it
+ * uploads file contents to the SecureFlow API whatever LOCAL_AI_URL says.
+ * LOCAL_AI_URL / LOCAL_AI_MODEL are still set for any in-process AI module
+ * that reads them via resolveLocalModelConfig().
  * The model can be overridden with --local-model <tag> (default: llama3).
  */
 const LOCAL_FLAG = process.argv.includes("--local");
@@ -93,7 +96,12 @@ function reportAiFinding(finding: AiFinding): void {
  * unchanged.
  */
 async function runAiScanIfAvailable(stagedForAi: StagedFileForAiScan[]): Promise<AiFinding[]> {
-  if (NO_AI || stagedForAi.length === 0) return [];
+  if (AI_SKIP_REASON === "local" && VERBOSE) {
+    console.warn(
+      "ℹ️  [SecureFlow] --local: hosted AI scan skipped, staged code stays on this machine.",
+    );
+  }
+  if (AI_SKIP_REASON || stagedForAi.length === 0) return [];
 
   try {
     return await requestAiFileScan(stagedForAi);

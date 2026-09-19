@@ -10,10 +10,6 @@ vi.mock("@/ai/genkit", () => ({
   ai: {
     generate: (...args: unknown[]) => mockGenerate(...args),
   },
-  getAiInstance: () => ({
-    generate: (...args: unknown[]) => mockGenerate(...args),
-  }),
-  getDefaultModelRef: () => "mock-model",
   defaultModel: "mock-model",
   securityExplanationModel: "mock-groq-model-id",
   getAiInstance: vi.fn(() => ({ generate: mockGenerate })),

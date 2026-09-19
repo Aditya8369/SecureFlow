@@ -37,6 +37,17 @@ const SCAN_JOB_TIMEOUT_MS = 600_000; // 10 minutes
  */
 const STALLED_CHECK_INTERVAL_MS = 60_000;
 
+/**
+ * Whether BullMQ is done with a failed job: its attempts are used up, or it
+ * threw `UnrecoverableError`, which ends the retry chain on any attempt.
+ */
+export function isFinalFailure(
+  job: { attemptsMade: number; opts: { attempts?: number } },
+  err: { name?: string },
+): boolean {
+  return err.name === "UnrecoverableError" || job.attemptsMade >= (job.opts.attempts ?? 2);
+}
+
 export interface WorkerPoolOptions {
   concurrency?: number;
   jobTimeoutMs?: number;
@@ -92,8 +103,12 @@ class ScanWorkerPool {
     this.worker.on("failed", async (job, err) => {
       console.error(`[WorkerPool] Job ${job?.id} failed:`, err.message);
 
-      // Route to DLQ on permanent failure
-      if (job && job.attemptsMade >= (job.opts.attempts ?? 2)) {
+      // Route to DLQ on permanent failure. `processJob` throws UnrecoverableError
+      // for a persistence failure or a bad installation id, and BullMQ then fails
+      // the job after that one attempt — `attemptsMade` is 1, below
+      // `attempts`, so the count alone never routed those jobs to the DLQ.
+      // Same rule as `outboundWorker` and `sbomWorker`.
+      if (job && isFinalFailure(job, err)) {
         console.warn(
           `[WorkerPool] Routing job ${job.id} to DLQ after ${job.attemptsMade} attempts`,
         );

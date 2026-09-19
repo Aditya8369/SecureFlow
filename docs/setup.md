@@ -43,11 +43,11 @@ npm run db:seed
 1. Sign up at [console.groq.com](https://console.groq.com).
 2. Go to **API Keys → Create API Key**.
 3. Copy the key → `GROQ_API_KEY`.
-4. `GROQ_MODEL` defaults to `llama-3.1-8b-instant`. Change only if you want a different supported model.
+4. `GROQ_MODEL` defaults to `openai/gpt-oss-20b`. Change only if you want a different supported model (Groq's [deprecation page](https://console.groq.com/docs/deprecations) lists the ones that have been shut down).
 
 ```env
 GROQ_API_KEY="gsk_..."
-GROQ_MODEL="llama-3.1-8b-instant"
+GROQ_MODEL="openai/gpt-oss-20b"
 ```
 
 ---

@@ -489,9 +489,9 @@ describe("scan model", () => {
   });
 
   it("resolves an unset or blank GROQ_MODEL to the default model", () => {
-    expect(resolveScanModel(undefined)).toBe("llama-3.1-8b-instant");
-    expect(resolveScanModel("")).toBe("llama-3.1-8b-instant");
-    expect(resolveScanModel("   ")).toBe("llama-3.1-8b-instant");
+    expect(resolveScanModel(undefined)).toBe("openai/gpt-oss-20b");
+    expect(resolveScanModel("")).toBe("openai/gpt-oss-20b");
+    expect(resolveScanModel("   ")).toBe("openai/gpt-oss-20b");
     expect(resolveScanModel(" openai/gpt-oss-20b ")).toBe("openai/gpt-oss-20b");
   });
 
@@ -505,7 +505,7 @@ describe("scan model", () => {
     );
 
     expect(mockCreate).toHaveBeenCalledTimes(1);
-    expect(mockCreate.mock.calls[0][0].model).toBe("llama-3.1-8b-instant");
+    expect(mockCreate.mock.calls[0][0].model).toBe("openai/gpt-oss-20b");
   });
 
   it("sends GROQ_MODEL when it is set", async () => {

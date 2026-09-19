@@ -132,7 +132,7 @@ Everything visible on the SecureFlow Mission Control Dashboard
 | **Framework**          | [Next.js 15](https://nextjs.org/) - App Router + Turbopack                                                           |
 | **Database**           | PostgreSQL + [Prisma ORM](https://www.prisma.io/)                                                                    |
 | **Authentication**     | [NextAuth.js v5](https://authjs.dev/) with GitHub OAuth                                                              |
-| **AI / LLM**           | [Groq SDK](https://groq.com/) (`llama-3.1-8b-instant`) + [Genkit](https://firebase.google.com/docs/genkit)           |
+| **AI / LLM**           | [Groq SDK](https://groq.com/) (`openai/gpt-oss-20b`) + [Genkit](https://firebase.google.com/docs/genkit)             |
 | **GitHub Integration** | [Octokit](https://github.com/octokit/octokit.js)                                                                     |
 | **UI**                 | [Tailwind CSS](https://tailwindcss.com/) + [Radix UI](https://www.radix-ui.com/) + [Recharts](https://recharts.org/) |
 

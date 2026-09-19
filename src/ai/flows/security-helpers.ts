@@ -20,7 +20,8 @@ async function llmInjectionCheck(text: string): Promise<boolean> {
   try {
     const response = await _groq.chat.completions.create(
       {
-        model: env.GROQ_MODEL || "llama-3.1-8b-instant",
+        // Same unset default as DEFAULT_SCAN_MODEL; llama-3.1-8b-instant is shut down.
+        model: env.GROQ_MODEL || "openai/gpt-oss-20b",
         temperature: 0,
         max_tokens: 5,
         messages: [

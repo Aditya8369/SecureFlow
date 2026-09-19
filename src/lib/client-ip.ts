@@ -274,6 +274,31 @@ export function resolveHopCount(raw: string | undefined): number {
   return parsed;
 }
 
+let warnedUnconfiguredProxy = false;
+
+/**
+ * Warn once when forwarding headers arrive but no proxy is configured.
+ *
+ * With both settings unset every caller resolves to `UNKNOWN_CLIENT_IP`, so the
+ * whole deployment shares one rate-limit bucket and one noisy client throttles
+ * everybody. That is the right answer for a directly exposed app, but behind
+ * Vercel, Render or nginx it is almost always a missing setting — and before the
+ * default changed to 0, those deployments did not need it. Only an *unset*
+ * variable warns: an explicit `0` is a deliberate choice.
+ */
+function warnIfProxyUnconfigured(headers: Headers): void {
+  if (warnedUnconfiguredProxy) return;
+  if (process.env.TRUSTED_PROXY_HOP_COUNT?.trim()) return;
+  if (!headers.has("x-forwarded-for") && !headers.has("x-real-ip")) return;
+
+  warnedUnconfiguredProxy = true;
+  console.warn(
+    "[client-ip] Forwarding headers are present but TRUSTED_PROXY_HOP_COUNT / TRUSTED_PROXY_IPS " +
+      "are not set, so every client shares one rate-limit bucket. Set TRUSTED_PROXY_HOP_COUNT=1 " +
+      "behind a single proxy (Vercel, Render, nginx), or 0 if the app is exposed directly.",
+  );
+}
+
 export interface ClientIpOptions {
   /** Trusted proxies in front of the app. Defaults to `TRUSTED_PROXY_HOP_COUNT`, or 0. */
   trustedHopCount?: number;
@@ -306,6 +331,9 @@ export function getClientIp(headers: Headers, options: ClientIpOptions = {}): st
     options.trustedProxies ?? parseTrustedProxies(process.env.TRUSTED_PROXY_IPS);
 
   if (trustedHopCount === 0 && trustedProxies.length === 0) {
+    if (options.trustedHopCount === undefined && options.trustedProxies === undefined) {
+      warnIfProxyUnconfigured(headers);
+    }
     return UNKNOWN_CLIENT_IP;
   }
 

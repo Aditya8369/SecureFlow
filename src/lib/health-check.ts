@@ -98,6 +98,37 @@ async function probeGroq(): Promise<ComponentHealth> {
   }
 }
 
+/**
+ * How long one Groq probe result is reused.
+ *
+ * `/api/health` is public and exempt from rate limiting (a throttled probe reads
+ * as an outage), and every call used to make an authenticated request to Groq
+ * with the server's API key. Anyone could therefore turn the endpoint into an
+ * unmetered stream of requests on that key. The probe answers "is the key valid
+ * and is Groq reachable", which does not change second to second, so one real
+ * request per window is enough.
+ */
+export const GROQ_PROBE_TTL_MS = 60_000;
+
+let groqProbeCache: { at: number; result: Promise<ComponentHealth> } | null = null;
+
+/**
+ * `probeGroq`, reused for `GROQ_PROBE_TTL_MS`.
+ *
+ * The promise is cached rather than the value, so concurrent calls during a
+ * slow probe share one request instead of each starting their own.
+ */
+function probeGroqCached(): Promise<ComponentHealth> {
+  const now = Date.now();
+  if (groqProbeCache && now - groqProbeCache.at < GROQ_PROBE_TTL_MS) {
+    return groqProbeCache.result;
+  }
+
+  const result = probeGroq();
+  groqProbeCache = { at: now, result };
+  return result;
+}
+
 function aggregateStatus(components: ComponentHealth[]): ComponentStatus {
   if (components.some((c) => c.status === "down")) return "down";
   if (components.some((c) => c.status === "degraded")) return "degraded";
@@ -109,7 +140,7 @@ function aggregateStatus(components: ComponentHealth[]): ComponentStatus {
  * Probes run with individual timeouts so one slow check doesn't block the rest.
  */
 export async function runHealthCheck(): Promise<HealthReport> {
-  const components = await Promise.all([probeDatabase(), probeRedis(), probeGroq()]);
+  const components = await Promise.all([probeDatabase(), probeRedis(), probeGroqCached()]);
 
   return {
     status: aggregateStatus(components),

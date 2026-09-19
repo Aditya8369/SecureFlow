@@ -20,13 +20,12 @@ import { withErrorHandler, AppError } from "@/lib/middleware/error-handler";
 import { withRateLimit } from "@/lib/middleware/rate-limit";
 import { scanner, type FileChange } from "@/lib/armor/scanner";
 
+export const MAX_FILES_PER_REQUEST = 100;
+export const MAX_FILE_CONTENT_LENGTH = 512 * 1024; // 512 KB
+export const MAX_PATH_LENGTH = 1024;
+
 /**
- * The request body, checked per entry.
- *
- * Only the array itself used to be checked. An entry without `content` (or a
- * `null` or string entry) reached `content.split` and came back as a 500, and
- * a numeric or empty `path` was handed to the scanner as a file name. This
- * route is unauthenticated, so malformed input is the caller's error, not ours.
+ * The request body, checked per entry with strict size and type boundaries.
  */
 const cliScanRequestSchema = z.object({
   files: z
@@ -34,12 +33,22 @@ const cliScanRequestSchema = z.object({
       z.object({
         path: z
           .string({ message: "each file needs a non-empty string `path`" })
-          .min(1, "each file needs a non-empty string `path`"),
-        content: z.string({ message: "each file needs a string `content`" }),
+          .min(1, "each file needs a non-empty string `path`")
+          .max(MAX_PATH_LENGTH, `each file path must not exceed ${MAX_PATH_LENGTH} characters`),
+        content: z
+          .string({ message: "each file needs a string `content`" })
+          .max(
+            MAX_FILE_CONTENT_LENGTH,
+            `file content exceeds maximum size of ${MAX_FILE_CONTENT_LENGTH} characters`,
+          ),
       }),
       { message: '"files" must be a non-empty array' },
     )
-    .min(1, '"files" must be a non-empty array'),
+    .min(1, '"files" must be a non-empty array')
+    .max(
+      MAX_FILES_PER_REQUEST,
+      `"files" array cannot contain more than ${MAX_FILES_PER_REQUEST} files per request`,
+    ),
 });
 
 /**
@@ -51,6 +60,9 @@ const cliScanRequestSchema = z.object({
  * from-scratch PR that adds the file.
  */
 function toSyntheticAddedPatch(content: string): string {
+  if (typeof content !== "string") {
+    return "";
+  }
   const lines = content.split("\n");
   const header = `@@ -0,0 +1,${lines.length} @@`;
   const body = lines.map((line) => `+${line}`).join("\n");

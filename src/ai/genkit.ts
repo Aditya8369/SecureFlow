@@ -108,10 +108,21 @@ export const availableGroqModels = [
 
 export const securityExplanationModel = gptOssx20b;
 
+/**
+ * Tried in order when the primary model is rate-limited or times out.
+ *
+ * Groq's recommended replacements (https://console.groq.com/docs/deprecations)
+ * for the models this list used to hold, all of which are shut down:
+ * `llama-3.3-70b-versatile` and `llama-3.1-8b-instant` on 2026-08-16, and
+ * `mixtral-8x7b-32768` on 2025-03-20 (it is not even in `genkitx-groq`'s model
+ * list). A request to any of them fails with an error that is neither a rate
+ * limit nor a timeout, so the chain stopped at the first fallback and the
+ * caller got that error instead of an explanation. Both entries below are
+ * models the `genkitx-groq` plugin defines.
+ */
 export const securityExplanationFallbackModels = [
-  "groq/llama-3.3-70b-versatile",
-  "groq/llama-3.1-8b-instant",
-  "groq/mixtral-8x7b-32768",
+  "groq/openai/gpt-oss-120b",
+  "groq/qwen/qwen3.6-27b",
 ] as const;
 
 /**

@@ -58,6 +58,25 @@ export function computeNextRetryAt(autoRetryCount: number): Date {
   return new Date(Date.now() + delayMs);
 }
 
+/**
+ * The auto-retry fields for a DLQ entry written when a job fails permanently.
+ *
+ * Empty for a job the auto-retry worker never requeued, so a first failure is
+ * retried on the next poll as before. A job it did requeue carries its count,
+ * and the entry is scheduled with backoff and eventually left for an operator.
+ */
+export function dlqRetryStateFor(
+  dlqAutoRetryCount: unknown,
+): Pick<DlqAutoRetryJobData, "autoRetryCount" | "nextRetryAt"> {
+  if (typeof dlqAutoRetryCount !== "number" || !Number.isInteger(dlqAutoRetryCount)) return {};
+  if (dlqAutoRetryCount <= 0) return {};
+
+  return {
+    autoRetryCount: dlqAutoRetryCount,
+    nextRetryAt: computeNextRetryAt(dlqAutoRetryCount).toISOString(),
+  };
+}
+
 /** True when a job's scheduled retry time has elapsed. */
 export function isRetryDue(nextRetryAt: string | null | undefined): boolean {
   if (!nextRetryAt) return true; // no schedule set → eligible immediately
@@ -119,14 +138,32 @@ export async function retryDlqJob(job: DlqJobLike): Promise<RetryOutcome> {
     };
   }
 
+  let removed = false;
+
   try {
     // Remove from DLQ first — worst case is a lost retry the operator can
     // observe, rather than a duplicate in both queues.
     await job.remove();
-    await addWebhookJob(payload, requeueOptionsFor(payload));
+    removed = true;
+    // The count rides on the job so a re-failure lands back in the DLQ with it
+    // (see the worker's `failed` handler); otherwise it restarts at 0 and the
+    // limit below is never reached.
+    await addWebhookJob(
+      { ...payload, dlqAutoRetryCount: autoRetryCount + 1 },
+      requeueOptionsFor(payload),
+    );
 
     return { jobId: descriptor.jobId, result: "requeued" };
   } catch (err) {
+    if (!removed) {
+      // The entry is still in the DLQ; re-inserting would duplicate it.
+      return {
+        jobId: descriptor.jobId,
+        result: "failed",
+        reason: err instanceof Error ? err.message : String(err),
+      };
+    }
+
     // Re-insert with incremented counter and a deferred `nextRetryAt` so the
     // job is not picked up again immediately.
     const nextCount = autoRetryCount + 1;

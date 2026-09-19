@@ -101,6 +101,38 @@ describe("Webhook Worker DLQ Routing", () => {
     );
   });
 
+  it("writes the auto-retry count back onto the DLQ entry for a requeued job", async () => {
+    const mockJob = {
+      id: "delivery-abc",
+      name: "process-webhook",
+      data: { event: "pull_request", deliveryId: "abc", dlqAutoRetryCount: 2 },
+      attemptsMade: 3,
+      opts: { attempts: 3 },
+    };
+
+    await handlers.failed!(mockJob, new Error("still failing"));
+
+    const [, entry] = mockDLQAdd.mock.calls[0];
+    expect(entry).toMatchObject({ autoRetryCount: 2, nextRetryAt: expect.any(String) });
+  });
+
+  it("leaves a first-time DLQ entry without auto-retry state", async () => {
+    await handlers.failed!(
+      {
+        id: "job-1",
+        name: "process-webhook",
+        data: { event: "pull_request" },
+        attemptsMade: 3,
+        opts: { attempts: 3 },
+      },
+      new Error("boom"),
+    );
+
+    const [, entry] = mockDLQAdd.mock.calls[0];
+    expect(entry).not.toHaveProperty("autoRetryCount");
+    expect(entry).not.toHaveProperty("nextRetryAt");
+  });
+
   it("does NOT route to DLQ when job fails temporarily (attempts remaining)", async () => {
     const failedHandler = handlers.failed!;
 

@@ -2,6 +2,7 @@ import { Worker, Job } from "bullmq";
 import { z } from "zod";
 import { redis } from "./redis";
 import { webhookDLQ, WebhookJobData } from "./webhookQueue";
+import { dlqRetryStateFor } from "./dlq-auto-retry";
 import { scanner, parseSecureFlowIgnore } from "@/lib/armor/scanner";
 import { processScanJob, type ScanJobResult } from "@/lib/scanner/scanEngine";
 import type { ScanJobData } from "@/lib/queue/scanQueue";
@@ -1076,6 +1077,7 @@ worker.on("failed", async (job: Job | undefined, err: Error) => {
           failedReason: err.message,
           failedAt: new Date().toISOString(),
           attemptsMade: job.attemptsMade,
+          ...dlqRetryStateFor(job.data?.dlqAutoRetryCount),
         },
         {
           attempts: 1,

@@ -5,6 +5,15 @@ export interface WebhookJobData {
   payload?: Record<string, unknown>;
   event?: string | null;
   deliveryId?: string | null;
+  /**
+   * How many times the DLQ auto-retry worker has requeued this delivery.
+   *
+   * Carried on the job so that, if it fails again, the worker's `failed`
+   * handler can write the count back onto the new DLQ entry. Without it every
+   * re-failure arrived in the DLQ as a first-time entry, so the auto-retry
+   * limit and backoff never applied.
+   */
+  dlqAutoRetryCount?: number;
 }
 
 export const webhookQueue = new Queue<WebhookJobData>("github-webhooks", {

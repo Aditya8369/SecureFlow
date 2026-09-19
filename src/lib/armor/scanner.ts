@@ -59,8 +59,14 @@ const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY || "dummy-key-for-build",
 });
 
-/** Model used when `GROQ_MODEL` is not set, the same default as the other Groq callers. */
-export const DEFAULT_SCAN_MODEL = "llama-3.1-8b-instant";
+/**
+ * Model used when `GROQ_MODEL` is not set, the same default as the other Groq callers.
+ *
+ * `openai/gpt-oss-20b` is the value `.env.example` sets and Groq's replacement
+ * for `llama-3.1-8b-instant`, which was the default here until Groq shut it down
+ * on 2026-08-16 (https://console.groq.com/docs/deprecations).
+ */
+export const DEFAULT_SCAN_MODEL = "openai/gpt-oss-20b";
 
 /**
  * Groq model id for the PR scan.

@@ -40,7 +40,7 @@ jobs:
             type=sha,prefix=,format=short
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       # Authenticate to GitHub Container Registry using the auto-provisioned
       # GITHUB_TOKEN — no manual secret required.

@@ -1,8 +1,14 @@
 import Redis from "ioredis";
+import { CircuitBreaker } from "./utils/circuit-breaker";
 
 const globalForRedis = globalThis as unknown as {
   redis: Redis | undefined;
 };
+
+export const redisCircuitBreaker = new CircuitBreaker({
+  failureThreshold: 5,
+  resetTimeoutMs: 10000, // 10 seconds
+});
 
 // Use an in-memory fallback if REDIS_URL is not provided (useful for local dev without Docker)
 let redisInstance: Redis | null = null;
@@ -232,9 +238,11 @@ export async function checkRateLimitDetailed(
       };
     })();
 
-    return await withTimeout(incrementTask, timeoutMs);
-  } catch (error) {
-    console.error("Redis error or timeout during rate limiting:", error);
+    return await redisCircuitBreaker.execute(() => withTimeout(incrementTask, timeoutMs));
+  } catch (error: any) {
+    if (error?.name !== "CircuitBreakerError") {
+      console.error("Redis error or timeout during rate limiting:", error);
+    }
 
     // The counter is unknown, so the reported window is a best guess. `degraded`
     // tells the caller not to advertise it as authoritative.

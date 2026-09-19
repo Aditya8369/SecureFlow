@@ -1,4 +1,4 @@
-﻿import { withRateLimit, TIERS } from "@/lib/middleware/rate-limit";
+import { withRateLimit, TIERS } from "@/lib/middleware/rate-limit";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 // 2. Correct default Prisma import
@@ -18,6 +18,7 @@ const handler = async function POST(
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    const userId = session.user.id;
 
     const { id } = await params;
     const findingId = id;
@@ -25,9 +26,14 @@ const handler = async function POST(
       where: { id: findingId },
       select: {
         id: true,
+        type: true,
         codeSnippet: true,
-        description: true,
-        filePath: true,
+        fileLocation: true,
+        explanation: true,
+        remediation: true,
+        scanResult: {
+          select: { pullRequest: { select: { repository: { select: { userId: true } } } } },
+        },
       },
     });
 
@@ -35,11 +41,19 @@ const handler = async function POST(
       return NextResponse.json({ error: "Finding not found" }, { status: 404 });
     }
 
+    if (finding.scanResult.pullRequest.repository.userId !== userId) {
+      return NextResponse.json(
+        { error: "Forbidden: You do not have access to this finding" },
+        { status: 403 },
+      );
+    }
+
     // Trigger AI flow
     const aiResult = await generateRemediationPatchFlow({
       vulnerableCode: finding.codeSnippet || "",
-      findingDescription: finding.description,
-      filePath: finding.filePath,
+      findingDescription:
+        finding.explanation || finding.remediation || `${finding.type} vulnerability`,
+      filePath: finding.fileLocation,
     });
 
     // Save to database

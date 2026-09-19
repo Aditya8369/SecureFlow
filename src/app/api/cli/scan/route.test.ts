@@ -43,7 +43,7 @@ vi.mock("@/lib/middleware/error-handler", () => {
   };
 });
 
-import { POST } from "./route";
+import { POST, MAX_FILES_PER_REQUEST, MAX_FILE_CONTENT_LENGTH, MAX_PATH_LENGTH } from "./route";
 
 function post(body: unknown): Promise<Response> {
   return POST(
@@ -88,6 +88,46 @@ describe("POST /api/cli/scan", () => {
     const res = await post(body);
 
     expect(res.status).toBe(400);
+    expect(scanPullRequestMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects when files array exceeds MAX_FILES_PER_REQUEST", async () => {
+    const files = Array.from({ length: MAX_FILES_PER_REQUEST + 1 }, (_, i) => ({
+      path: `file-${i}.ts`,
+      content: "const a = 1;",
+    }));
+
+    const res = await post({ files });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: `"files" array cannot contain more than ${MAX_FILES_PER_REQUEST} files per request`,
+    });
+    expect(scanPullRequestMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects when file content exceeds MAX_FILE_CONTENT_LENGTH", async () => {
+    const largeContent = "x".repeat(MAX_FILE_CONTENT_LENGTH + 1);
+    const res = await post({
+      files: [{ path: "huge.ts", content: largeContent }],
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: `file content exceeds maximum size of ${MAX_FILE_CONTENT_LENGTH} characters`,
+    });
+    expect(scanPullRequestMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects when file path exceeds MAX_PATH_LENGTH", async () => {
+    const longPath = "a/".repeat(MAX_PATH_LENGTH) + "file.ts";
+    const res = await post({
+      files: [{ path: longPath, content: "ok" }],
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: `each file path must not exceed ${MAX_PATH_LENGTH} characters`,
+    });
     expect(scanPullRequestMock).not.toHaveBeenCalled();
   });
 

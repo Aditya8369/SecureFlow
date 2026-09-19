@@ -11,6 +11,7 @@ vi.mock("@/auth", () => ({ auth: vi.fn(async () => mockSession) }));
 
 const mockFindFirst = vi.hoisted(() => vi.fn());
 const mockUpsert = vi.hoisted(() => vi.fn());
+const generatePatchMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/prisma", () => ({
   default: {
@@ -20,10 +21,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 vi.mock("@/ai/flows/generate-remediation-patch", () => ({
-  generateRemediationPatchFlow: vi.fn().mockResolvedValue({
-    patchDiff: "--- a/src/db.ts\n+++ b/src/db.ts",
-    explanation: "Use parameterized queries.",
-  }),
+  generateRemediationPatchFlow: generatePatchMock,
 }));
 
 vi.mock("@/lib/middleware/rate-limit", () => ({
@@ -44,7 +42,6 @@ vi.mock("@/lib/middleware/error-handler", () => ({
 }));
 
 import { POST } from "./route";
-import { generateRemediationPatchFlow } from "@/ai/flows/generate-remediation-patch";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -75,6 +72,10 @@ beforeEach(() => {
   mockSession = { user: { id: "user-1" } };
   mockFindFirst.mockResolvedValue(FINDING);
   mockUpsert.mockResolvedValue(PATCH);
+  generatePatchMock.mockResolvedValue({
+    patchDiff: "--- a/src/db.ts\n+++ b/src/db.ts",
+    explanation: "Use parameterized queries.",
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -116,8 +117,6 @@ describe("POST /api/findings/[id]/remediate — ownership check", () => {
   });
 
   it("throws 404 when finding belongs to a different user (not 403 — no oracle)", async () => {
-    // A finding owned by another user returns null from the scoped query,
-    // which must look identical to a finding that does not exist at all.
     mockFindFirst.mockResolvedValue(null);
 
     await expect(
@@ -126,7 +125,7 @@ describe("POST /api/findings/[id]/remediate — ownership check", () => {
       }),
     ).rejects.toMatchObject({ statusCode: 404 });
 
-    expect(generateRemediationPatchFlow).not.toHaveBeenCalled();
+    expect(generatePatchMock).not.toHaveBeenCalled();
   });
 
   it("throws 404 when finding does not exist", async () => {
@@ -136,7 +135,7 @@ describe("POST /api/findings/[id]/remediate — ownership check", () => {
       POST(makeRequest("nonexistent"), { params: Promise.resolve({ id: "nonexistent" }) }),
     ).rejects.toMatchObject({ statusCode: 404 });
 
-    expect(generateRemediationPatchFlow).not.toHaveBeenCalled();
+    expect(generatePatchMock).not.toHaveBeenCalled();
   });
 });
 
@@ -148,9 +147,9 @@ describe("POST /api/findings/[id]/remediate — field name fix", () => {
   it("passes finding.fileLocation (not filePath) to the AI flow", async () => {
     await POST(makeRequest("finding-1"), { params: Promise.resolve({ id: "finding-1" }) });
 
-    expect(generateRemediationPatchFlow).toHaveBeenCalledWith(
+    expect(generatePatchMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        filePath: "src/db.ts", // comes from finding.fileLocation
+        filePath: "src/db.ts",
       }),
     );
   });
@@ -158,7 +157,7 @@ describe("POST /api/findings/[id]/remediate — field name fix", () => {
   it("passes codeSnippet and description to the AI flow", async () => {
     await POST(makeRequest("finding-1"), { params: Promise.resolve({ id: "finding-1" }) });
 
-    expect(generateRemediationPatchFlow).toHaveBeenCalledWith(
+    expect(generatePatchMock).toHaveBeenCalledWith(
       expect.objectContaining({
         vulnerableCode: FINDING.codeSnippet,
         findingDescription: FINDING.description,
@@ -171,7 +170,7 @@ describe("POST /api/findings/[id]/remediate — field name fix", () => {
 
     await POST(makeRequest("finding-1"), { params: Promise.resolve({ id: "finding-1" }) });
 
-    expect(generateRemediationPatchFlow).toHaveBeenCalledWith(
+    expect(generatePatchMock).toHaveBeenCalledWith(
       expect.objectContaining({ vulnerableCode: "" }),
     );
   });

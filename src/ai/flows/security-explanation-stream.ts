@@ -3,6 +3,7 @@ import Groq from "groq-sdk";
 import { getVulnerabilityMetadata } from "../../database/vulnerabilityDb";
 import { __internal, isRateLimitError, isTimeoutError, withRetry } from "./security-helpers";
 import { ai, securityExplanationModel, getSecurityExplanationModelChain } from "@/ai/genkit";
+import { env } from "@/lib/env";
 import { executeWithFallbackAndRetry } from "../resilience";
 import {
   AISecurityExplanationApiSchema,
@@ -13,7 +14,7 @@ import {
   type AISecurityExplanationOutput,
 } from "./security-explanation-schemas";
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY || "dummy-key-for-build" });
+const groq = new Groq({ apiKey: env.GROQ_API_KEY });
 
 interface StreamOptions {
   vulnerabilityId: string;
@@ -48,7 +49,8 @@ Provide a concise explanation, architectural impact, and immediate remediation s
     // - Set 'stream: true' for instantaneous chunk emissions
     // - Use Groq's low-latency streaming inference
     const responseStream = await groq.chat.completions.create({
-      model: process.env.STREAM_AI_MODEL || process.env.GROQ_MODEL || "llama-3.1-8b-instant",
+      // Unset default matches DEFAULT_SCAN_MODEL; llama-3.1-8b-instant is shut down.
+      model: process.env.STREAM_AI_MODEL || process.env.GROQ_MODEL || "openai/gpt-oss-20b",
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: contextualPrompt },

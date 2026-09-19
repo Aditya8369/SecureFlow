@@ -80,6 +80,25 @@ export interface ScanProgress {
 type ProgressCallback = (progress: ScanProgress) => void;
 
 /**
+ * A chunk of the pull request could not be scanned.
+ *
+ * `scanner.scanPullRequest` throws once its own retries are exhausted precisely so a scan
+ * the LLM never completed cannot be reported as clean (6452440). Swallowing that error
+ * here and carrying on turned an unavailable analysis engine back into a `PASS` check
+ * run with zero findings, for the webhook worker as well as the queued path.
+ */
+export class ScanIncompleteError extends Error {
+  constructor(
+    readonly failedFiles: readonly string[],
+    readonly cause: unknown,
+  ) {
+    const reason = cause instanceof Error ? cause.message : String(cause);
+    super(`Scan incomplete: ${failedFiles.length} file(s) could not be analysed (${reason})`);
+    this.name = "ScanIncompleteError";
+  }
+}
+
+/**
  * Which of the engine's side effects to run.
  *
  * `src/lib/queue/worker.ts` calls `processScanJob` for the scanning and then
@@ -102,6 +121,14 @@ export interface ProcessScanJobOptions {
   report?: boolean;
   /** Write the `PullRequest`, `ScanResult`, `Finding` and `AuditLog` rows. */
   persist?: boolean;
+  /**
+   * Request an AI explanation for each active finding.
+   *
+   * The webhook worker explains the findings itself (and masks the output) before it
+   * posts them, so enriching here as well paid for every explanation twice and threw
+   * the first copy away.
+   */
+  enrich?: boolean;
 }
 
 /**
@@ -119,7 +146,7 @@ export async function processScanJob(
   onProgress: ProgressCallback = () => {},
   options: ProcessScanJobOptions = {},
 ): Promise<ScanJobResult> {
-  const { report = true, persist = true } = options;
+  const { report = true, persist = true, enrich = true } = options;
   const {
     scanJobId,
     repositoryId,
@@ -193,7 +220,13 @@ export async function processScanJob(
       allFindings.push(...chunkFindings);
     } catch (err) {
       console.error(`[ScanEngine] Error scanning chunk ${i}-${i + chunk.length}:`, err);
-      // Continue with next chunk — partial results are better than no results
+      // Fail the scan rather than continue: findings from the other chunks would be
+      // evaluated as if these files were clean, and a PR whose risky file sat in this
+      // chunk would pass.
+      throw new ScanIncompleteError(
+        chunk.map((file) => file.filename),
+        err,
+      );
     }
 
     scannedFiles = Math.min(i + CHUNK_SIZE, totalFiles);
@@ -263,6 +296,7 @@ export async function processScanJob(
   // Each batch runs in parallel (fast), but batches are sequential (safe).
   // This keeps Groq request rate well within limits while still being faster
   // than fully sequential processing.
+  // Enrich active findings with AI explanations in batches to prevent rate-limit storms (thundering herd)
   const enrichedFindings: EnrichedScanFinding[] = [];
 
   for (let i = 0; i < activeFindings.length; i += AI_ENRICHMENT_CONCURRENCY) {
@@ -270,6 +304,7 @@ export async function processScanJob(
 
     const batchResults = await Promise.all(
       batch.map(async (finding): Promise<EnrichedScanFinding> => {
+        if (!enrich) return finding;
         try {
           const aiResponse = await developerReceivesAISecurityExplanations({
             findingType: finding.type,

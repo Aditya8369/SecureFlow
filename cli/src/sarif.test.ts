@@ -128,5 +128,23 @@ describe("SARIF Export Functionality for SecureFlow CLI (#728)", () => {
       expect(textOutput).toContain("🚨 [SecureFlow] Secret logging detected");
       expect(textOutput).toContain("src/config/db.ts:15");
     });
+
+    it("should output CSV format via formatScanResults", () => {
+      const csvOutput = formatScanResults(sampleScanResults, "csv");
+      expect(csvOutput).toContain("File,Line,Violation,Reason");
+      expect(csvOutput).toContain("src/config/db.ts");
+      expect(csvOutput).toContain("environment variable");
+      const lines = csvOutput.trimEnd().split("\n");
+      // 1 header + 3 violations
+      expect(lines).toHaveLength(4);
+    });
+
+    it("should output HTML format via formatScanResults", () => {
+      const htmlOutput = formatScanResults(sampleScanResults, "html");
+      expect(htmlOutput).toContain("<!DOCTYPE html>");
+      expect(htmlOutput).toContain("SecureFlow Scan Report");
+      expect(htmlOutput).toContain("src/config/db.ts");
+      expect(htmlOutput).toContain("3 violations found.");
+    });
   });
 });

@@ -16,18 +16,33 @@ const CITIES = [
   "Palermo",
 ];
 
+/**
+ * How long roles copied into the JWT are trusted before they are re-read.
+ *
+ * Every admin check — the proxy guard, `/admin`'s layout, `requireAdmin` in the
+ * admin server actions, `/api/admin/export` — reads `session.user.roles`, which
+ * comes from the token. The token only re-read the database when its roles were
+ * empty, its codename was missing or the client called `update()`, none of
+ * which happens to an established admin. So demoting an admin (or deleting the
+ * user) had no effect on their session, and sessions last a year. With this,
+ * a change in the database reaches the session within the interval.
+ */
+export const ROLES_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+
 const nextAuthResult = NextAuth({
   // Spread authConfig first to inherit providers, pages, and base session logic
   ...authConfig,
   adapter: {
     ...PrismaAdapter(prisma),
     createUser: async (user: any) => {
-      const githubLogin = user.githubLogin ?? null;
-      const { githubLogin: _drop, ...rest } = user;
       return prisma.user.create({
         data: {
-          ...rest,
-          githubLogin,
+          id: user.id,
+          name: user.name ?? null,
+          email: user.email ?? null,
+          emailVerified: user.emailVerified ?? null,
+          image: user.image ?? null,
+          githubLogin: user.githubLogin ?? null,
           codename: null,
           roles: {
             create: [
@@ -52,6 +67,16 @@ const nextAuthResult = NextAuth({
   },
   callbacks: {
     ...authConfig.callbacks,
+    async redirect({ url, baseUrl }: { url: string; baseUrl: string }) {
+      if (url.startsWith("/")) return `${baseUrl}${url}`;
+
+      try {
+        const target = new URL(url);
+        if (target.origin === new URL(baseUrl).origin) return url;
+      } catch {}
+
+      return `${baseUrl}/dashboard`;
+    },
     async jwt(params: any) {
       const { token, user, account, trigger } = params;
 
@@ -64,9 +89,16 @@ const nextAuthResult = NextAuth({
 
       // 2. Fetch roles and codename if missing OR if a session update is triggered
       const userId = (token.userId || user?.id || token.sub) as string | undefined;
+      const rolesStale =
+        typeof token.rolesCheckedAt !== "number" ||
+        Date.now() - token.rolesCheckedAt >= ROLES_REFRESH_INTERVAL_MS;
       if (
-        (userId && (!token.roles || token.roles.length === 0 || !token.codename)) ||
-        trigger === "update"
+        userId &&
+        (!token.roles ||
+          token.roles.length === 0 ||
+          !token.codename ||
+          trigger === "update" ||
+          rolesStale)
       ) {
         const dbUser = await prisma.user.findUnique({
           where: { id: userId },
@@ -74,6 +106,7 @@ const nextAuthResult = NextAuth({
         });
 
         token.roles = dbUser?.roles.map((r: any) => r.role.name) || [];
+        token.rolesCheckedAt = Date.now();
 
         // Sync codename from database or session payload
         if (dbUser?.codename) {

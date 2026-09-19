@@ -25,3 +25,37 @@ describe("toGenkitGroqModel", () => {
     expect(toGenkitGroqModel("  groq/openai/gpt-oss-20b ")).toBe("groq/openai/gpt-oss-20b");
   });
 });
+
+describe("model defaults", () => {
+  async function loadWith(groqModel: string | undefined) {
+    vi.resetModules();
+    vi.stubEnv("GROQ_MODEL", groqModel as string);
+    if (groqModel === undefined) delete process.env.GROQ_MODEL;
+    try {
+      return await import("./genkit");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  }
+
+  it.each([undefined, "", "   "])(
+    "uses Groq's current default, not the deprecated llama-3.1-8b-instant, when GROQ_MODEL is %j",
+    async (value) => {
+      const { DEFAULT_SECURITY_CONFIG, defaultModel } = await loadWith(value);
+
+      expect(DEFAULT_SECURITY_CONFIG.modelName).toBe("groq/openai/gpt-oss-20b");
+      expect(defaultModel).toBe("groq/openai/gpt-oss-20b");
+    },
+  );
+
+  it.each([
+    ["llama-3.3-70b-versatile", "groq/llama-3.3-70b-versatile"],
+    ["groq/llama-3.3-70b-versatile", "groq/llama-3.3-70b-versatile"],
+    [" openai/gpt-oss-120b ", "groq/openai/gpt-oss-120b"],
+  ])("resolves GROQ_MODEL=%j to %s for both references", async (value, expected) => {
+    const { DEFAULT_SECURITY_CONFIG, defaultModel } = await loadWith(value);
+
+    expect(DEFAULT_SECURITY_CONFIG.modelName).toBe(expected);
+    expect(defaultModel).toBe(expected);
+  });
+});

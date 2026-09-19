@@ -29,6 +29,17 @@ export function toGenkitGroqModel(modelId: string): string {
   return trimmed.startsWith("groq/") ? trimmed : `groq/${trimmed}`;
 }
 
+/**
+ * The Groq model used when `GROQ_MODEL` is unset or blank.
+ *
+ * Groq's current recommended default — see the deprecation note on
+ * `defaultModel` below. The Genkit instance used to fall back to
+ * `llama-3.1-8b-instant` instead, the model that note says was deprecated, so
+ * the heist transmission (which runs on `DEFAULT_SECURITY_CONFIG.modelName`)
+ * used a different model from the one documented for it.
+ */
+export const DEFAULT_GROQ_MODEL_ID = "openai/gpt-oss-20b";
+
 /** `GROQ_MODEL` as a Genkit model reference, or undefined when it is unset or blank. */
 function configuredGroqModel(): string | undefined {
   const modelId = process.env.GROQ_MODEL?.trim();
@@ -38,7 +49,7 @@ function configuredGroqModel(): string | undefined {
 export const DEFAULT_SECURITY_CONFIG: SecurityAIConfig = {
   temperature: 0.2,
   maxOutputTokens: 1024,
-  modelName: configuredGroqModel() ?? "groq/llama-3.1-8b-instant",
+  modelName: configuredGroqModel() ?? toGenkitGroqModel(DEFAULT_GROQ_MODEL_ID),
 };
 
 export const ai = genkit({
@@ -93,10 +104,16 @@ export { isLocalModelEnabled };
 // `gpt-oss-20b` is Groq's current recommended default for general-purpose
 // low-latency inference. Override via `GROQ_MODEL` if your account still
 // has access to a deprecated model.
-const GROQ_MODEL = process.env.GROQ_MODEL ?? "openai/gpt-oss-20b";
 
-/** Model reference flows should use unless they need to override it explicitly. */
-export const defaultModel = `groq/${GROQ_MODEL}`;
+/**
+ * Model reference flows should use unless they need to override it explicitly.
+ *
+ * Built the same way as `DEFAULT_SECURITY_CONFIG.modelName`. It used to be
+ * `"groq/" + (process.env.GROQ_MODEL ?? default)`, which gave `"groq/"` for a
+ * blank variable (`??` keeps `""`) and `"groq/groq/…"` for an id that already
+ * had the namespace — the form `toGenkitGroqModel` exists to accept.
+ */
+export const defaultModel = configuredGroqModel() ?? toGenkitGroqModel(DEFAULT_GROQ_MODEL_ID);
 
 export const availableGroqModels = [
   "groq/llama-3.1-8b-instant",

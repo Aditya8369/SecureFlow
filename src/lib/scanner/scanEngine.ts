@@ -40,6 +40,16 @@ const CHUNK_SIZE = 10;
 /** Delay between chunks to avoid overwhelming the LLM API. */
 const CHUNK_DELAY_MS = 100;
 
+/**
+ * Maximum number of findings enriched with AI explanations concurrently.
+ *
+ * Previously all findings were enriched with Promise.all, firing every AI call
+ * at once. On a PR with many findings this immediately exhausted the Groq rate
+ * limit (429) and caused all retries to fire simultaneously — a thundering herd.
+ * Processing in batches of this size keeps the request rate within limits.
+ */
+const AI_ENRICHMENT_CONCURRENCY = 3;
+
 export interface ScanJobResult {
   scanJobId: string;
   scannedFiles: number;
@@ -275,30 +285,49 @@ export async function processScanJob(
     (f) => !f.fingerprint || !suppressedFingerprints.has(f.fingerprint),
   );
 
-  // Enrich active findings with AI explanations
-  const enrichedFindings: EnrichedScanFinding[] = await Promise.all(
-    activeFindings.map(async (finding): Promise<EnrichedScanFinding> => {
-      if (!enrich) return finding;
-      try {
-        const aiResponse = await developerReceivesAISecurityExplanations({
-          findingType: finding.type,
-          severity: finding.severity,
-          description: finding.description,
-          fileLocation: finding.fileLocation,
-          codeSnippet: finding.codeSnippet || "",
-        });
-        return {
-          ...finding,
-          explanation: maskFindingText(aiResponse.explanation),
-          remediation: maskFindingText(aiResponse.remediationSuggestions),
-          promptInjectionSuspected: aiResponse.promptInjectionSuspected,
-        };
-      } catch (err) {
-        console.error(`[ScanEngine] Failed to enrich finding:`, err);
-        return finding;
-      }
-    }),
-  );
+  // Enrich active findings with AI explanations.
+  //
+  // Previously used Promise.all over all findings simultaneously. On a PR with
+  // many findings this fired all AI calls at once, immediately exhausting the
+  // Groq rate limit (429) and causing every call to fail and retry at the same
+  // time — a thundering herd that made the problem worse with each retry cycle.
+  //
+  // Fixed by processing findings in batches of AI_ENRICHMENT_CONCURRENCY (3).
+  // Each batch runs in parallel (fast), but batches are sequential (safe).
+  // This keeps Groq request rate well within limits while still being faster
+  // than fully sequential processing.
+  // Enrich active findings with AI explanations in batches to prevent rate-limit storms (thundering herd)
+  const enrichedFindings: EnrichedScanFinding[] = [];
+
+  for (let i = 0; i < activeFindings.length; i += AI_ENRICHMENT_CONCURRENCY) {
+    const batch = activeFindings.slice(i, i + AI_ENRICHMENT_CONCURRENCY);
+
+    const batchResults = await Promise.all(
+      batch.map(async (finding): Promise<EnrichedScanFinding> => {
+        if (!enrich) return finding;
+        try {
+          const aiResponse = await developerReceivesAISecurityExplanations({
+            findingType: finding.type,
+            severity: finding.severity,
+            description: finding.description,
+            fileLocation: finding.fileLocation,
+            codeSnippet: finding.codeSnippet || "",
+          });
+          return {
+            ...finding,
+            explanation: maskFindingText(aiResponse.explanation),
+            remediation: maskFindingText(aiResponse.remediationSuggestions),
+            promptInjectionSuspected: aiResponse.promptInjectionSuspected,
+          };
+        } catch (err) {
+          console.error(`[ScanEngine] Failed to enrich finding:`, err);
+          return finding;
+        }
+      }),
+    );
+
+    enrichedFindings.push(...batchResults);
+  }
 
   // --- Phase 4: Evaluate policy decision ---
   const decision = iq.evaluateFindings(activeFindings);

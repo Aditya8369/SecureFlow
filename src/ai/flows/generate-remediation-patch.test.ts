@@ -62,24 +62,29 @@ describe("generateRemediationPatch", () => {
     expect(callArgs.prompt).toContain(VALID_INPUT.vulnerableCode);
   });
 
-  it("throws when the model returns null output", async () => {
+  it("falls back to static guidance when the AI provider throws", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockGenerate.mockRejectedValue(new Error("Request timed out"));
+
+    const result = await generateRemediationPatch(VALID_INPUT);
+
+    expect(result.patchDiff).toBe("");
+    expect(result.explanation).toMatch(/temporarily unavailable/);
+  });
+
+  it("falls back to static guidance when the model returns no output", async () => {
     mockGenerate.mockResolvedValue({ output: null });
 
-    await expect(generateRemediationPatch(VALID_INPUT)).rejects.toThrow(
-      "Failed to generate a valid remediation patch.",
-    );
+    const result = await generateRemediationPatch(VALID_INPUT);
+
+    expect(result.patchDiff).toBe("");
+    expect(result.explanation).toMatch(/temporarily unavailable/);
   });
 
   it("throws on invalid input (missing required fields)", async () => {
     await expect(
       generateRemediationPatch({ vulnerableCode: "x" } as any),
     ).rejects.toThrow();
-  });
-
-  it("propagates errors from ai.generate", async () => {
-    mockGenerate.mockRejectedValue(new Error("model unavailable"));
-
-    await expect(generateRemediationPatch(VALID_INPUT)).rejects.toThrow("model unavailable");
   });
 });
 

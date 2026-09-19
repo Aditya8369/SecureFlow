@@ -38,26 +38,38 @@ export async function generateRemediationPatch(input: PatchInput): Promise<Patch
   const prompt = `You are an expert security engineer. Your task is to generate a unified diff patch to fix the following security vulnerability.
 
 File: ${validatedInput.filePath}
+
 Vulnerability: ${validatedInput.findingDescription}
+
 Current Code:
+
 \`\`\`
 ${validatedInput.vulnerableCode}
 \`\`\`
 
 Provide ONLY the unified diff patch that fixes this issue securely. Do not include markdown code blocks around the diff, just the raw diff text. Also provide a brief 1-sentence explanation of the fix.
+
 `;
 
-  const { output } = await activeAi.generate({
-    model: activeModel as any,
-    prompt,
-    output: { schema: PatchOutputSchema, format: "json" },
-  });
+  try {
+    const { output } = await activeAi.generate({
+      model: activeModel as any,
+      prompt,
+      output: { schema: PatchOutputSchema, format: "json" },
+    });
 
-  if (!output) {
-    throw new Error("Failed to generate a valid remediation patch.");
+    if (output) {
+      return output;
+    }
+  } catch (error) {
+    console.warn("[REMEDIATION] AI provider unavailable, using static fallback:", error);
   }
 
-  return output;
+  return {
+    patchDiff: "",
+    explanation:
+      "The AI remediation service is temporarily unavailable. Please review the vulnerability manually and apply the appropriate secure remediation before merging.",
+  };
 }
 
 /**

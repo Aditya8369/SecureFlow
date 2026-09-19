@@ -170,9 +170,7 @@ describe("POST /api/findings/[id]/remediate — field name fix", () => {
 
     await POST(makeRequest("finding-1"), { params: Promise.resolve({ id: "finding-1" }) });
 
-    expect(generatePatchMock).toHaveBeenCalledWith(
-      expect.objectContaining({ vulnerableCode: "" }),
-    );
+    expect(generatePatchMock).toHaveBeenCalledWith(expect.objectContaining({ vulnerableCode: "" }));
   });
 });
 

@@ -39,10 +39,7 @@ export type Web3Ecosystem = "solidity" | "rust-soroban" | "zk-circuit" | "generi
  * Used to select the right prompt template. Falls back to `generic-web3` so
  * the flow always produces a useful explanation even for unknown extensions.
  */
-export function detectWeb3Ecosystem(
-  fileLocation: string,
-  findingType: string,
-): Web3Ecosystem {
+export function detectWeb3Ecosystem(fileLocation: string, findingType: string): Web3Ecosystem {
   const lower = fileLocation.toLowerCase();
   const type = findingType.toLowerCase();
 

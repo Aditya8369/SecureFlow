@@ -228,7 +228,8 @@ async function handler(request: NextRequest, { params }: { params: Promise<{ id:
         if (!abortSignal.aborted) {
           send({
             type: "error",
-            message: err instanceof Error ? scrubSensitiveData(err.message) : "AI generation failed.",
+            message:
+              err instanceof Error ? scrubSensitiveData(err.message) : "AI generation failed.",
           });
         }
       } finally {

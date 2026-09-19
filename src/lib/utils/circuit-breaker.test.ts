@@ -44,26 +44,32 @@ describe("CircuitBreaker", () => {
 
   it("should throw CircuitBreakerError immediately when OPEN", async () => {
     const breaker = new CircuitBreaker({ failureThreshold: 1, resetTimeoutMs: 10000 });
-    
-    await expect(breaker.execute(async () => {
-      throw new Error("Action failed");
-    })).rejects.toThrow("Action failed");
+
+    await expect(
+      breaker.execute(async () => {
+        throw new Error("Action failed");
+      }),
+    ).rejects.toThrow("Action failed");
 
     expect(breaker.getState()).toBe(CircuitState.OPEN);
 
     // Now it should fast-fail
-    await expect(breaker.execute(async () => "will not execute"))
-      .rejects.toThrow(CircuitBreakerError);
-    await expect(breaker.execute(async () => "will not execute"))
-      .rejects.toThrow("Circuit breaker is OPEN");
+    await expect(breaker.execute(async () => "will not execute")).rejects.toThrow(
+      CircuitBreakerError,
+    );
+    await expect(breaker.execute(async () => "will not execute")).rejects.toThrow(
+      "Circuit breaker is OPEN",
+    );
   });
 
   it("should transition to HALF_OPEN after resetTimeoutMs", async () => {
     const breaker = new CircuitBreaker({ failureThreshold: 1, resetTimeoutMs: 10000 });
-    
-    await expect(breaker.execute(async () => {
-      throw new Error("Action failed");
-    })).rejects.toThrow("Action failed");
+
+    await expect(
+      breaker.execute(async () => {
+        throw new Error("Action failed");
+      }),
+    ).rejects.toThrow("Action failed");
 
     expect(breaker.getState()).toBe(CircuitState.OPEN);
 
@@ -78,10 +84,12 @@ describe("CircuitBreaker", () => {
 
   it("should transition back to CLOSED if action succeeds in HALF_OPEN state", async () => {
     const breaker = new CircuitBreaker({ failureThreshold: 1, resetTimeoutMs: 10000 });
-    
-    await expect(breaker.execute(async () => {
-      throw new Error("Action failed");
-    })).rejects.toThrow("Action failed");
+
+    await expect(
+      breaker.execute(async () => {
+        throw new Error("Action failed");
+      }),
+    ).rejects.toThrow("Action failed");
 
     // Advance time to HALF_OPEN
     vi.advanceTimersByTime(10000);
@@ -97,19 +105,23 @@ describe("CircuitBreaker", () => {
 
   it("should transition back to OPEN if action fails in HALF_OPEN state", async () => {
     const breaker = new CircuitBreaker({ failureThreshold: 1, resetTimeoutMs: 10000 });
-    
-    await expect(breaker.execute(async () => {
-      throw new Error("Action failed");
-    })).rejects.toThrow("Action failed");
+
+    await expect(
+      breaker.execute(async () => {
+        throw new Error("Action failed");
+      }),
+    ).rejects.toThrow("Action failed");
 
     // Advance time to HALF_OPEN
     vi.advanceTimersByTime(10000);
     expect(breaker.getState()).toBe(CircuitState.HALF_OPEN);
 
     // Execute failing action
-    await expect(breaker.execute(async () => {
-      throw new Error("Another failure");
-    })).rejects.toThrow("Another failure");
+    await expect(
+      breaker.execute(async () => {
+        throw new Error("Another failure");
+      }),
+    ).rejects.toThrow("Another failure");
 
     // Should be OPEN again
     expect(breaker.getState()).toBe(CircuitState.OPEN);
@@ -121,11 +133,13 @@ describe("CircuitBreaker", () => {
 
   it("should reset failure count on success", async () => {
     const breaker = new CircuitBreaker({ failureThreshold: 2, resetTimeoutMs: 10000 });
-    
+
     // One failure
-    await expect(breaker.execute(async () => {
-      throw new Error("Action failed");
-    })).rejects.toThrow("Action failed");
+    await expect(
+      breaker.execute(async () => {
+        throw new Error("Action failed");
+      }),
+    ).rejects.toThrow("Action failed");
     expect(breaker.getState()).toBe(CircuitState.CLOSED);
 
     // One success
@@ -133,9 +147,11 @@ describe("CircuitBreaker", () => {
     expect(breaker.getState()).toBe(CircuitState.CLOSED);
 
     // One failure (should not trip because count was reset)
-    await expect(breaker.execute(async () => {
-      throw new Error("Action failed");
-    })).rejects.toThrow("Action failed");
+    await expect(
+      breaker.execute(async () => {
+        throw new Error("Action failed");
+      }),
+    ).rejects.toThrow("Action failed");
     expect(breaker.getState()).toBe(CircuitState.CLOSED);
   });
 });

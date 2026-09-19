@@ -1,7 +1,13 @@
 import "dotenv/config";
 import { getVulnerabilityMetadata } from "../../database/vulnerabilityDb";
 import { __internal, isRateLimitError, isTimeoutError, withRetry } from "./security-helpers";
-import { getAiInstance, getDefaultModelRef, ai, securityExplanationModel, getSecurityExplanationModelChain } from "@/ai/genkit";
+import {
+  getAiInstance,
+  getDefaultModelRef,
+  ai,
+  securityExplanationModel,
+  getSecurityExplanationModelChain,
+} from "@/ai/genkit";
 import { executeWithFallbackAndRetry } from "../resilience";
 import {
   AISecurityExplanationApiSchema,
@@ -11,7 +17,6 @@ import {
   type AISecurityExplanationInput,
   type AISecurityExplanationOutput,
 } from "./security-explanation-schemas";
-
 
 interface StreamOptions {
   vulnerabilityId: string;
@@ -48,7 +53,7 @@ Provide a concise explanation, architectural impact, and immediate remediation s
       ? `${userPrompt}\nContextual Details: ${metadata.description} (CVSS: ${metadata.cvss})`
       : userPrompt;
 
-const activeAi = getAiInstance();
+    const activeAi = getAiInstance();
     const activeModel = getDefaultModelRef();
 
     const { stream } = await activeAi.generateStream({
@@ -68,10 +73,7 @@ const activeAi = getAiInstance();
       }
     }
   } catch (error) {
-    console.error(
-      "[AI_STREAM_ERROR] Critical failure in streaming pipeline:",
-      error,
-    );
+    console.error("[AI_STREAM_ERROR] Critical failure in streaming pipeline:", error);
     throw new Error("Streaming pipeline encountered an internal execution fault.");
   }
 }

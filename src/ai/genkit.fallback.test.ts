@@ -52,13 +52,15 @@ describe("security explanation fallback chain", () => {
   it("puts the fallbacks after the primary model in the chain", async () => {
     vi.resetModules();
     vi.stubEnv("GROQ_MODEL", "");
+    vi.stubEnv("LOCAL_AI_URL", ""); // Ensure local mode is explicitly off
     const { getSecurityExplanationModelChain } = await import("./genkit");
-    vi.unstubAllEnvs();
 
     expect(getSecurityExplanationModelChain()).toEqual([
       { name: "groq/openai/gpt-oss-20b" },
       "groq/openai/gpt-oss-120b",
       "groq/qwen/qwen3.6-27b",
     ]);
+
+    vi.unstubAllEnvs();
   });
 });

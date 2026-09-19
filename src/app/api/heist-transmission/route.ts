@@ -178,7 +178,8 @@ export function createHeistStream(
           return;
         }
 
-        const message = err instanceof Error ? scrubSensitiveData(err.message) : "Unknown streaming error.";
+        const message =
+          err instanceof Error ? scrubSensitiveData(err.message) : "Unknown streaming error.";
         send({ type: "error", message });
         finish();
       }

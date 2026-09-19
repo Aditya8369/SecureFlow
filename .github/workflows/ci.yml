@@ -192,6 +192,9 @@ jobs:
       NEXTAUTH_TRUST_HOST: "true"
       NEXT_PUBLIC_MOCK_DB: "true"
       NEXT_PUBLIC_MOCK_AUTH: "true"
+      # Server-only opt-in required alongside NEXT_PUBLIC_MOCK_AUTH so the mock
+      # auth seam can never be enabled by the public flag alone.
+      ALLOW_MOCK_AUTH: "true"
       CI: "true"
 
     steps:

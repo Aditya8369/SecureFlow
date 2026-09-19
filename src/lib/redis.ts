@@ -202,7 +202,7 @@ export async function checkRateLimitDetailed(
   }
 
   try {
-    const incrementTask = (async (): Promise<RateLimitResult> => {
+    const incrementTask = async (): Promise<RateLimitResult> => {
       const pipeline = redis.pipeline();
       pipeline.incr(key);
       pipeline.expire(key, windowSeconds, "NX"); // Only set expiry if key has no TTL
@@ -238,9 +238,9 @@ export async function checkRateLimitDetailed(
         resetAt: now + ttlMs,
         degraded: false,
       };
-    })();
+    };
 
-    return await redisCircuitBreaker.execute(() => withTimeout(incrementTask, timeoutMs));
+    return await redisCircuitBreaker.execute(() => withTimeout(incrementTask(), timeoutMs));
   } catch (error: any) {
     if (error?.name !== "CircuitBreakerError") {
       console.error("Redis error or timeout during rate limiting:", error);

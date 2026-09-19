@@ -62,6 +62,20 @@ vi.mock("@/lib/prisma", () => ({
   default: mockPrisma,
 }));
 
+vi.mock("@/lib/sbom/vulnerability-matcher", () => ({
+  matchVulnerabilities: vi.fn(async (deps: Array<{ name: string }>) =>
+    deps
+      .filter((d) => d.name === "lodash")
+      .map((d) => ({
+        dependency: d,
+        cveId: "CVE-2021-23337",
+        severity: "HIGH",
+        description: "Prototype Pollution in lodash",
+        patchedVersion: "4.17.21",
+      })),
+  ),
+}));
+
 import { processSbomJob } from "./sbomWorker";
 import { UnrecoverableError } from "bullmq";
 

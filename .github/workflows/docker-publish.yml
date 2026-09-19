@@ -55,7 +55,7 @@ jobs:
       # intermediate layer, not just the final stage), so cold builds on a
       # fresh runner still benefit from previously-cached layers.
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true

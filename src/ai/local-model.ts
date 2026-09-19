@@ -21,10 +21,6 @@
  */
 
 import { genkit } from "genkit";
-// The package root exports `openAICompatible`, not `openAI`: a named `openAI`
-// import from it is `undefined` at runtime. The real `openAI` plugin (on the
-// `/openai` subpath) is no use here either — it drops `baseURL` from its options
-// and only knows OpenAI's own model list.
 import { openAICompatible } from "@genkit-ai/compat-oai";
 
 // ---------------------------------------------------------------------------
@@ -92,7 +88,6 @@ export function createLocalAiInstance(config: LocalModelConfig) {
   return genkit({
     plugins: [
       openAICompatible({
-        // Kept as "openai" so model refs stay `openai/<model>` (localModelRef).
         name: "openai",
         baseURL: config.baseUrl,
         // Ollama does not require an API key but the plugin requires a non-empty

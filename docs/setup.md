@@ -62,7 +62,9 @@ GROQ_MODEL="llama-3.1-8b-instant"
      ngrok http 9002   # copy the https:// forwarding URL
      ```
    - **Webhook Secret**: any random string (e.g. `openssl rand -hex 20`) → `GITHUB_WEBHOOK_SECRET`
-3. Set **Repository Permissions**: Contents `Read`, Pull Requests `Read & Write`, Checks `Read & Write`.
+3. Set **Repository Permissions**: Contents `Read`, Pull Requests `Read & Write`, Checks `Read & Write`, Code scanning alerts `Read & Write`.
+   - Code scanning alerts (the `security_events` permission) is what lets SecureFlow publish findings to the repository's **Security → Code scanning** tab. Without it the scan still runs and still posts its check run; only the upload is skipped.
+   - GitHub accepts these uploads for public repositories, and for private repositories only with GitHub Advanced Security enabled. A private repository without it answers `403`, which SecureFlow logs and moves past.
 4. Subscribe to events: `Pull request`, `Installation`, `Installation repositories`.
 5. Click **Create GitHub App**, then:
    - Copy **App ID** → `GITHUB_APP_ID`

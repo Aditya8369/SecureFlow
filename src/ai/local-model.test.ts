@@ -33,16 +33,22 @@ afterEach(() => {
 
 describe("resolveLocalModelConfig", () => {
   it("returns null when LOCAL_AI_URL is not set", () => {
-    expect(resolveLocalModelConfig({})).toBeNull();
+    expect(resolveLocalModelConfig({} as unknown as NodeJS.ProcessEnv)).toBeNull();
   });
 
   it("returns null when LOCAL_AI_URL is an empty string", () => {
-    expect(resolveLocalModelConfig({ LOCAL_AI_URL: "" })).toBeNull();
-    expect(resolveLocalModelConfig({ LOCAL_AI_URL: "   " })).toBeNull();
+    expect(
+      resolveLocalModelConfig({ LOCAL_AI_URL: "" } as unknown as NodeJS.ProcessEnv),
+    ).toBeNull();
+    expect(
+      resolveLocalModelConfig({ LOCAL_AI_URL: "   " } as unknown as NodeJS.ProcessEnv),
+    ).toBeNull();
   });
 
   it("returns a config with the provided URL and default model", () => {
-    const config = resolveLocalModelConfig({ LOCAL_AI_URL: "http://localhost:11434/v1" });
+    const config = resolveLocalModelConfig({
+      LOCAL_AI_URL: "http://localhost:11434/v1",
+    } as unknown as NodeJS.ProcessEnv);
 
     expect(config).toEqual({
       baseUrl: "http://localhost:11434/v1",
@@ -54,7 +60,7 @@ describe("resolveLocalModelConfig", () => {
     const config = resolveLocalModelConfig({
       LOCAL_AI_URL: "http://localhost:11434/v1",
       LOCAL_AI_MODEL: "codellama",
-    });
+    } as unknown as NodeJS.ProcessEnv);
 
     expect(config?.model).toBe("codellama");
   });
@@ -63,14 +69,16 @@ describe("resolveLocalModelConfig", () => {
     const config = resolveLocalModelConfig({
       LOCAL_AI_URL: "  http://localhost:11434/v1  ",
       LOCAL_AI_MODEL: "  mistral  ",
-    });
+    } as unknown as NodeJS.ProcessEnv);
 
     expect(config?.baseUrl).toBe("http://localhost:11434/v1");
     expect(config?.model).toBe("mistral");
   });
 
   it("accepts a non-default port and path", () => {
-    const config = resolveLocalModelConfig({ LOCAL_AI_URL: "http://192.168.1.10:8080/v1" });
+    const config = resolveLocalModelConfig({
+      LOCAL_AI_URL: "http://192.168.1.10:8080/v1",
+    } as unknown as NodeJS.ProcessEnv);
     expect(config?.baseUrl).toBe("http://192.168.1.10:8080/v1");
   });
 });
@@ -81,15 +89,19 @@ describe("resolveLocalModelConfig", () => {
 
 describe("isLocalModelEnabled", () => {
   it("returns false when LOCAL_AI_URL is absent", () => {
-    expect(isLocalModelEnabled({})).toBe(false);
+    expect(isLocalModelEnabled({} as unknown as NodeJS.ProcessEnv)).toBe(false);
   });
 
   it("returns true when LOCAL_AI_URL is set", () => {
-    expect(isLocalModelEnabled({ LOCAL_AI_URL: "http://localhost:11434/v1" })).toBe(true);
+    expect(
+      isLocalModelEnabled({
+        LOCAL_AI_URL: "http://localhost:11434/v1",
+      } as unknown as NodeJS.ProcessEnv),
+    ).toBe(true);
   });
 
   it("returns false for a blank LOCAL_AI_URL", () => {
-    expect(isLocalModelEnabled({ LOCAL_AI_URL: "" })).toBe(false);
+    expect(isLocalModelEnabled({ LOCAL_AI_URL: "" } as unknown as NodeJS.ProcessEnv)).toBe(false);
   });
 });
 

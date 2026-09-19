@@ -115,6 +115,8 @@ function makeRequest(
     "content-type": "application/json",
     ...overrides,
   };
+  const streamChunks = [body];
+  let chunkIndex = 0;
   return {
     headers: {
       get: (k: string) => {
@@ -138,6 +140,16 @@ function makeRequest(
     },
     text: vi.fn(async () => body),
     json: vi.fn(async () => JSON.parse(body)),
+    body: {
+      getReader: vi.fn(() => ({
+        read: async () => {
+          if (chunkIndex >= streamChunks.length) return { done: true, value: undefined };
+          const chunk = new TextEncoder().encode(streamChunks[chunkIndex++]);
+          return { done: false, value: chunk };
+        },
+        releaseLock: vi.fn(),
+      })),
+    },
   } as any;
 }
 
@@ -300,6 +312,15 @@ describe("GitHub webhook route", () => {
     it("reads raw text and never calls req.json() before or during signature verification", async () => {
       const req = makeRequest(minimalPRPayload);
       await POST(req);
+      expect(req.body.getReader).toHaveBeenCalled();
+      expect(req.text).not.toHaveBeenCalled();
+      expect(req.json).not.toHaveBeenCalled();
+    });
+
+    it("falls back to req.text() when req.body stream is unavailable", async () => {
+      const req = makeRequest(minimalPRPayload);
+      delete req.body;
+      await POST(req);
       expect(req.text).toHaveBeenCalled();
       expect(req.json).not.toHaveBeenCalled();
     });
@@ -385,6 +406,15 @@ describe("GitHub webhook route", () => {
       const req = makeRequest(minimalPRPayload);
       const res = await POST(req);
       expect(res.status).toBe(202);
+    });
+
+    it("returns 413 when Content-Length lied and req.body is unavailable", async () => {
+      process.env.GITHUB_WEBHOOK_MAX_BYTES = "16";
+      const req = makeRequest(minimalPRPayload, { "content-length": "1" });
+      delete req.body;
+      const res = await POST(req);
+      expect(res.status).toBe(413);
+      expect(addWebhookJob).not.toHaveBeenCalled();
     });
   });
 

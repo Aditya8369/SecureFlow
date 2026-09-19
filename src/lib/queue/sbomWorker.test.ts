@@ -439,6 +439,79 @@ describe("sbomWorker", () => {
       expect(mockPrisma.scanJob.update).not.toHaveBeenCalled();
     });
 
+    function completedJob(scanJobId: string, fileName: string, vulnerabilitiesFound?: number) {
+      mockPrisma.scanJob.findUnique.mockResolvedValue({
+        id: scanJobId,
+        status: "COMPLETED",
+        pullRequestId: "pr-9",
+        vulnerabilitiesFound,
+      });
+      mockRedis.get.mockResolvedValue(null);
+      mockPrisma.auditLog.findFirst.mockResolvedValue(null);
+      return {
+        id: `job-${scanJobId}`,
+        data: { scanJobId, fileName, content: "{}", userId: "user-1", pullRequestId: "pr-9" },
+        opts: { attempts: 3 },
+        attemptsMade: 1,
+      } as any;
+    }
+
+    it("6. recovers only this manifest's dependency findings from ScanResult", async () => {
+      const job = completedJob("sj-6", "api/package.json");
+      mockPrisma.scanResult.findFirst.mockResolvedValue({
+        policyDecision: "BLOCK",
+        createdAt: new Date("2026-09-14T12:00:00Z"),
+        findings: [
+          {
+            severity: "CRITICAL",
+            fileLocation: "api/package.json",
+            type: "VULNERABILITY",
+            codeSnippet: "Dependency: @babel/traverse@7.22.0\nPatched: 7.23.2",
+            explanation: "CVE-2023-45133 in @babel/traverse.",
+          },
+        ],
+      });
+
+      const result = await processSbomJob(job);
+
+      const { where, include } = mockPrisma.scanResult.findFirst.mock.calls[0][0];
+      const own = { fileLocation: "api/package.json", type: "VULNERABILITY" };
+      expect(where).toEqual({ pullRequestId: "pr-9", findings: { some: own } });
+      expect(include).toEqual({ findings: { where: own } });
+      expect(result.vulnerabilities).toEqual([
+        {
+          dependency: {
+            name: "@babel/traverse",
+            version: "7.22.0",
+            manifestFile: "api/package.json",
+            ecosystem: "npm",
+          },
+          cveId: "CVE-2023-45133",
+          severity: "CRITICAL",
+          description: "CVE-2023-45133 in @babel/traverse.",
+          patchedVersion: "7.23.2",
+        },
+      ]);
+      expect(result.status).toBe("VULNERABLE");
+    });
+
+    it("7. reports a clean completed scan from its ScanJob row when there are no findings", async () => {
+      const job = completedJob("sj-7", "requirements.txt", 0);
+      mockPrisma.scanResult.findFirst.mockResolvedValue(null);
+
+      const result = await processSbomJob(job);
+
+      expect(result).toMatchObject({ scanId: "sj-7", status: "CLEAN", vulnerabilities: [] });
+      expect(mockPrisma.scanJob.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("8. still refuses to invent a result when findings were expected but are missing", async () => {
+      const job = completedJob("sj-8", "requirements.txt", 2);
+      mockPrisma.scanResult.findFirst.mockResolvedValue(null);
+
+      await expect(processSbomJob(job)).rejects.toThrow(UnrecoverableError);
+    });
+
     it("6. handles duplicate worker delivery gracefully when another worker already PROCESSING", async () => {
       mockPrisma.scanJob.findUnique
         .mockResolvedValueOnce({ id: "sj-racing", status: "PENDING" })

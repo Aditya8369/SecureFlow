@@ -128,7 +128,7 @@ describe("localModelRef", () => {
 // ---------------------------------------------------------------------------
 
 describe("createLocalAiInstance", () => {
-  it("calls genkit() with the openAI plugin", () => {
+  it("calls genkit() with the OpenAI-compatible plugin", () => {
     createLocalAiInstance({ baseUrl: "http://localhost:11434/v1", model: "llama3" });
 
     expect(openAICompatible).toHaveBeenCalledOnce();

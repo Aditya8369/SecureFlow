@@ -47,7 +47,7 @@ export interface LocalModelConfig {
  * Both have sensible defaults so the only required variable is `LOCAL_AI_URL`.
  */
 export function resolveLocalModelConfig(
-  env: NodeJS.ProcessEnv = process.env,
+  env: Readonly<Record<string, string | undefined>> = process.env,
 ): LocalModelConfig | null {
   const baseUrl = env.LOCAL_AI_URL?.trim();
   if (!baseUrl) return null;
@@ -64,7 +64,9 @@ export function resolveLocalModelConfig(
  * True when `LOCAL_AI_URL` is set in the environment. Used by flows to decide
  * which Genkit instance and model reference to use.
  */
-export function isLocalModelEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+export function isLocalModelEnabled(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
   return resolveLocalModelConfig(env) !== null;
 }
 

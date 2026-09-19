@@ -23,9 +23,6 @@ import {
   verifySignature,
   webhookJobId,
 } from "@/lib/github/webhook-verification";
-import prisma from "@/lib/prisma";
-import { Octokit } from "octokit";
-import { enqueueSbomScan } from "@/lib/queue/sbomQueue";
 import { env } from "@/lib/env";
 
 /**
@@ -47,138 +44,9 @@ import { env } from "@/lib/env";
  * so each branch is unit-testable without constructing a request.
  */
 
-async function fetchFileContent(
-  octokit: InstanceType<typeof Octokit>,
-  owner: string,
-  repo: string,
-  path: string,
-  ref: string,
-) {
-  try {
-    // Added .rest namespace
-    const { data } = await octokit.rest.repos.getContent({ owner, repo, path, ref });
-    if ("content" in data && data.content) {
-      return Buffer.from(data.content, "base64").toString("utf-8");
-    }
-    return null;
-  } catch (error) {
-    console.error(`[SBOM] Failed to fetch ${path}:`, error);
-    return null;
-  }
-}
-
-/**
- * Executes routines when an existing Pull Request receives new code commits
- */
-export async function handlePullRequestSynchronize(
-  payload: Record<string, unknown> | any,
-  deliveryId?: string,
-) {
-  const prNumber = payload.number;
-  const repoName = payload.repository?.full_name;
-  const headSha = payload.pull_request?.head?.sha;
-
-  console.log(
-    `[PR_SYNC] New code pushed to PR #${prNumber} on repo ${repoName}. Head SHA: ${headSha}`,
-  );
-
-  // Extract necessary fields for SBOM scanning
-  const { pull_request, repository, installation } = payload;
-
-  if (!pull_request || !repository || !installation) {
-    console.warn("[PR_SYNC] Missing required fields for SBOM processing");
-    return;
-  }
-
-  try {
-    // 1. Resolve SecureFlow Repository
-    const dbRepo = await prisma.repository.findUnique({
-      where: { githubId: BigInt(repository.id) },
-    });
-
-    if (!dbRepo || !dbRepo.userId) {
-      console.warn(
-        `[PR_SYNC] Repository ${repository.full_name} (${repository.id}) not found or unowned in SecureFlow database. Skipping SBOM scan.`,
-      );
-      return;
-    }
-
-    // 2. Resolve or upsert PR Record using valid schema fields
-    const dbPr = await prisma.pullRequest.upsert({
-      where: { githubId: BigInt(pull_request.id) },
-      update: {
-        title: pull_request.title || `PR #${pull_request.number}`,
-        state: pull_request.state === "closed" ? "CLOSED" : "OPEN",
-      },
-      create: {
-        githubId: BigInt(pull_request.id),
-        prNumber: pull_request.number,
-        title: pull_request.title || `PR #${pull_request.number}`,
-        state: pull_request.state === "closed" ? "CLOSED" : "OPEN",
-        status: "REVIEW_REQUIRED",
-        authorLogin: pull_request.user?.login || null,
-        authorAvatarUrl: pull_request.user?.avatar_url || null,
-        repositoryId: dbRepo.id,
-      },
-    });
-
-    const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
-    const owner = repository.owner.login;
-    const repo = repository.name;
-
-    // 3. Get changed files
-    const { data: files } = await octokit.rest.pulls.listFiles({
-      owner,
-      repo,
-      pull_number: pull_request.number,
-    });
-
-    // 4. SBOM Dependency Scan Integration
-    console.log(`[SBOM] Checking ${files.length} files for manifests...`);
-
-    for (const file of files) {
-      // Detect manifest files
-      if (file.filename.endsWith("package.json") || file.filename.endsWith("requirements.txt")) {
-        console.log(`[SBOM] Detected manifest: ${file.filename}`);
-
-        // Fetch content (using PR head ref to get the version being merged)
-        const content = await fetchFileContent(
-          octokit,
-          owner,
-          repo,
-          file.filename,
-          pull_request.head.ref,
-        );
-
-        if (content) {
-          // Derive deterministic deduplication key based on repo + PR + commit + filename
-          const dedupeKey = `webhook:${dbRepo.id}:${dbPr.id}:${headSha || "head"}:${file.filename}`;
-          const jobId = `sbom:${dbRepo.id}-${dbPr.id}-${headSha || "head"}-${file.filename.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
-
-          // Offload SBOM dependency scan to background queue (#809)
-          await enqueueSbomScan(
-            {
-              fileName: file.filename,
-              content,
-              userId: dbRepo.userId,
-              repositoryId: dbRepo.id,
-              pullRequestId: dbPr.id,
-            },
-            {
-              jobId,
-              dedupeKey,
-              deliveryId,
-            },
-          );
-          console.log(`[SBOM] Enqueued asynchronous SBOM scan for manifest: ${file.filename}`);
-        }
-      }
-    }
-  } catch (error) {
-    console.error("[PR_SYNC] Error during SBOM processing:", error);
-    // Don't throw - we still want to queue the job even if SBOM fails
-  }
-}
+// Runs in the webhook worker now (see `src/lib/queue/worker.ts`); re-exported
+// so existing callers and tests keep importing it from here.
+export { handlePullRequestSynchronize } from "@/lib/sbom/pull-request-manifests";
 
 /**
  * Triggers security tracking or alert logging loops when repository protection controls change
@@ -212,7 +80,7 @@ const handler = withErrorHandler(async function POST(req: NextRequest) {
   if (isPayloadTooLarge(req.headers.get("content-length"), maxBytes)) {
     throw new AppError("Webhook payload exceeds the configured size limit", 413);
   }
-  const webhookSecret = env.GITHUB_WEBHOOK_SECRET;
+  const webhookSecret = env.GITHUB_WEBHOOK_SECRET ?? process.env.GITHUB_WEBHOOK_SECRET;
   if (!webhookSecret || !webhookSecret.trim()) {
     throw new AppError("GITHUB_WEBHOOK_SECRET is not set", 500);
   }
@@ -278,14 +146,7 @@ const handler = withErrorHandler(async function POST(req: NextRequest) {
     return NextResponse.json({ message: "Event not tracked", deliveryId }, { status: 200 });
   }
 
-  // Route event actions
-  if (event === "pull_request" && parsed.payload.action === "synchronize") {
-    await handlePullRequestSynchronize(parsed.payload, deliveryId);
-  } else if (event === "branch_protection_rule") {
-    await handleBranchProtectionMutation(parsed.payload);
-  }
-
-  // 7. Delegate to the queue.
+  // 6. Delegate to the queue.
   //
   // The job ID is derived from the delivery ID so BullMQ collapses a replayed
   // delivery before a worker picks it up, rather than leaving the worker's

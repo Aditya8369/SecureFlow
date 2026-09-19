@@ -62,6 +62,20 @@ vi.mock("@/lib/prisma", () => ({
   default: mockPrisma,
 }));
 
+vi.mock("@/lib/sbom/vulnerability-matcher", () => ({
+  matchVulnerabilities: vi.fn(async (deps: Array<{ name: string }>) =>
+    deps
+      .filter((d) => d.name === "lodash")
+      .map((d) => ({
+        dependency: d,
+        cveId: "CVE-2021-23337",
+        severity: "HIGH",
+        description: "Prototype Pollution in lodash",
+        patchedVersion: "4.17.21",
+      })),
+  ),
+}));
+
 import { processSbomJob } from "./sbomWorker";
 import { UnrecoverableError } from "bullmq";
 
@@ -439,6 +453,79 @@ describe("sbomWorker", () => {
       expect(mockPrisma.scanJob.update).not.toHaveBeenCalled();
     });
 
+    function completedJob(scanJobId: string, fileName: string, vulnerabilitiesFound?: number) {
+      mockPrisma.scanJob.findUnique.mockResolvedValue({
+        id: scanJobId,
+        status: "COMPLETED",
+        pullRequestId: "pr-9",
+        vulnerabilitiesFound,
+      });
+      mockRedis.get.mockResolvedValue(null);
+      mockPrisma.auditLog.findFirst.mockResolvedValue(null);
+      return {
+        id: `job-${scanJobId}`,
+        data: { scanJobId, fileName, content: "{}", userId: "user-1", pullRequestId: "pr-9" },
+        opts: { attempts: 3 },
+        attemptsMade: 1,
+      } as any;
+    }
+
+    it("6. recovers only this manifest's dependency findings from ScanResult", async () => {
+      const job = completedJob("sj-6", "api/package.json");
+      mockPrisma.scanResult.findFirst.mockResolvedValue({
+        policyDecision: "BLOCK",
+        createdAt: new Date("2026-09-14T12:00:00Z"),
+        findings: [
+          {
+            severity: "CRITICAL",
+            fileLocation: "api/package.json",
+            type: "VULNERABILITY",
+            codeSnippet: "Dependency: @babel/traverse@7.22.0\nPatched: 7.23.2",
+            explanation: "CVE-2023-45133 in @babel/traverse.",
+          },
+        ],
+      });
+
+      const result = await processSbomJob(job);
+
+      const { where, include } = mockPrisma.scanResult.findFirst.mock.calls[0][0];
+      const own = { fileLocation: "api/package.json", type: "VULNERABILITY" };
+      expect(where).toEqual({ pullRequestId: "pr-9", findings: { some: own } });
+      expect(include).toEqual({ findings: { where: own } });
+      expect(result.vulnerabilities).toEqual([
+        {
+          dependency: {
+            name: "@babel/traverse",
+            version: "7.22.0",
+            manifestFile: "api/package.json",
+            ecosystem: "npm",
+          },
+          cveId: "CVE-2023-45133",
+          severity: "CRITICAL",
+          description: "CVE-2023-45133 in @babel/traverse.",
+          patchedVersion: "7.23.2",
+        },
+      ]);
+      expect(result.status).toBe("VULNERABLE");
+    });
+
+    it("7. reports a clean completed scan from its ScanJob row when there are no findings", async () => {
+      const job = completedJob("sj-7", "requirements.txt", 0);
+      mockPrisma.scanResult.findFirst.mockResolvedValue(null);
+
+      const result = await processSbomJob(job);
+
+      expect(result).toMatchObject({ scanId: "sj-7", status: "CLEAN", vulnerabilities: [] });
+      expect(mockPrisma.scanJob.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("8. still refuses to invent a result when findings were expected but are missing", async () => {
+      const job = completedJob("sj-8", "requirements.txt", 2);
+      mockPrisma.scanResult.findFirst.mockResolvedValue(null);
+
+      await expect(processSbomJob(job)).rejects.toThrow(UnrecoverableError);
+    });
+
     it("6. handles duplicate worker delivery gracefully when another worker already PROCESSING", async () => {
       mockPrisma.scanJob.findUnique
         .mockResolvedValueOnce({ id: "sj-racing", status: "PENDING" })
@@ -489,6 +576,75 @@ describe("sbomWorker", () => {
           data: expect.objectContaining({ status: "COMPLETED" }),
         }),
       );
+    });
+  });
+
+  describe("retry after a transient failure", () => {
+    /** A ScanJob row that honours the `status` guard on `updateMany`, as Postgres does. */
+    function storeScanJobInMemory(initial: Record<string, unknown>) {
+      const row = { ...initial };
+      mockPrisma.scanJob.findUnique.mockImplementation(async () => ({ ...row }));
+      mockPrisma.scanJob.updateMany.mockImplementation(
+        async ({ where, data }: { where: { status?: string }; data: Record<string, unknown> }) => {
+          if (where.status !== undefined && where.status !== row.status) return { count: 0 };
+          Object.assign(row, data);
+          return { count: 1 };
+        },
+      );
+      mockPrisma.scanJob.update.mockImplementation(
+        async ({ data }: { data: Record<string, unknown> }) => {
+          Object.assign(row, data);
+          return { ...row };
+        },
+      );
+      return row;
+    }
+
+    const jobAttempt = (attemptsMade: number) =>
+      ({
+        id: "job-retry",
+        data: {
+          scanJobId: "sj-retry",
+          fileName: "package.json",
+          content: JSON.stringify({ dependencies: { lodash: "^4.17.20" } }),
+          userId: "user-1",
+          pullRequestId: "pr-retry",
+        },
+        opts: { attempts: 3 },
+        attemptsMade,
+      }) as any;
+
+    it("scans the manifest on the retry instead of reporting it CLEAN", async () => {
+      const row = storeScanJobInMemory({
+        id: "sj-retry",
+        status: "PENDING",
+        pullRequestId: "pr-retry",
+      });
+      mockPrisma.auditLog.create.mockResolvedValue({});
+      mockPrisma.$transaction.mockRejectedValueOnce(new Error("connection reset"));
+
+      await expect(processSbomJob(jobAttempt(0))).rejects.toThrow("connection reset");
+      expect(row.status).toBe("PENDING");
+
+      const result = await processSbomJob(jobAttempt(1));
+
+      expect(result.status).toBe("VULNERABLE");
+      expect(result.totalDependencies).toBe(1);
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(2);
+      expect(row.status).toBe("COMPLETED");
+    });
+
+    it("marks the ScanJob FAILED, not PENDING, when the last attempt fails", async () => {
+      const row = storeScanJobInMemory({
+        id: "sj-retry",
+        status: "PENDING",
+        pullRequestId: "pr-retry",
+      });
+      mockPrisma.$transaction.mockRejectedValueOnce(new Error("connection reset"));
+
+      await expect(processSbomJob(jobAttempt(2))).rejects.toThrow("connection reset");
+
+      expect(row.status).toBe("FAILED");
     });
   });
 });

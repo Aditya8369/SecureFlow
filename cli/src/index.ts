@@ -8,9 +8,37 @@ import {
   type AiFinding,
   type StagedFileForAiScan,
 } from "./lib/api-client.js";
+import { hostedAiScanSkipReason } from "./lib/local-mode.js";
 
 const VERBOSE = process.argv.includes("--verbose");
-const NO_AI = process.argv.includes("--no-ai");
+const AI_SKIP_REASON = hostedAiScanSkipReason(process.argv);
+
+/**
+ * --local flag: keep staged code on this machine (#892).
+ *
+ * The hosted AI pass is skipped (see hostedAiScanSkipReason), because it
+ * uploads file contents to the SecureFlow API whatever LOCAL_AI_URL says.
+ * LOCAL_AI_URL / LOCAL_AI_MODEL are still set for any in-process AI module
+ * that reads them via resolveLocalModelConfig().
+ * The model can be overridden with --local-model <tag> (default: llama3).
+ */
+const LOCAL_FLAG = process.argv.includes("--local");
+if (LOCAL_FLAG) {
+  const localFlagIndex = process.argv.findIndex((a) => a === "--local");
+  const nextArg = process.argv[localFlagIndex + 1];
+
+  // Check if the argument after --local is a URL (starts with http:// or https://)
+  const customUrl =
+    nextArg && (nextArg.startsWith("http://") || nextArg.startsWith("https://"))
+      ? nextArg
+      : undefined;
+
+  const modelIdx = process.argv.findIndex((a) => a === "--local-model");
+  const localModel = modelIdx !== -1 ? process.argv[modelIdx + 1] : undefined;
+
+  process.env.LOCAL_AI_URL = customUrl || process.env.LOCAL_AI_URL || "http://localhost:11434/v1";
+  if (localModel) process.env.LOCAL_AI_MODEL = localModel;
+}
 
 function parseFormatArg(): OutputFormat {
   const formatIndex = process.argv.findIndex((arg) => arg === "--format");
@@ -68,7 +96,12 @@ function reportAiFinding(finding: AiFinding): void {
  * unchanged.
  */
 async function runAiScanIfAvailable(stagedForAi: StagedFileForAiScan[]): Promise<AiFinding[]> {
-  if (NO_AI || stagedForAi.length === 0) return [];
+  if (AI_SKIP_REASON === "local" && VERBOSE) {
+    console.warn(
+      "ℹ️  [SecureFlow] --local: hosted AI scan skipped, staged code stays on this machine.",
+    );
+  }
+  if (AI_SKIP_REASON || stagedForAi.length === 0) return [];
 
   try {
     return await requestAiFileScan(stagedForAi);

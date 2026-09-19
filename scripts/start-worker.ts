@@ -4,6 +4,7 @@ import { sbomWorker } from "../src/lib/queue/sbomWorker";
 import { scanWorkerPool } from "../src/lib/queue/workerPool";
 import { setupWorkerSignalHandlers } from "../src/lib/queue/shutdown";
 import { describeWorkerStartup, planWorkerStartup } from "../src/lib/queue/scan-worker-bootstrap";
+import { createDlqAutoRetryWorker } from "../src/lib/queue/dlq-auto-retry";
 import express from "express";
 
 const app = express();
@@ -40,9 +41,13 @@ sbomWorker.on("error", (err) => {
 // `enqueueScan` — and no consumer, so every job it enqueued sat in Redis while
 // its ScanJob row stayed PENDING forever (#750).
 if (plan.scanWorkerEnabled) {
-  scanWorkerPool.start();
+  scanWorkerPool.start(plan.scanConcurrency ?? undefined);
   console.log(`🚀 BullMQ Worker (Scans) started with concurrency=${plan.scanConcurrency}`);
 }
+
+const dlqAutoRetryWorker = createDlqAutoRetryWorker();
+dlqAutoRetryWorker.start();
+console.log("🔁 DLQ Auto-Retry Worker started");
 
 const server = app.listen(3000, () => {
   console.log("Worker running on 3000");
@@ -56,7 +61,10 @@ setupWorkerSignalHandlers({
   workers: [worker, outboundWorker, sbomWorker],
   // `scanWorkerPool` is not a BullMQ `Worker`, so it cannot go in `workers`.
   // Without this a SIGTERM exits with a scan mid-flight still holding its lock.
-  drain: plan.scanWorkerEnabled ? [() => scanWorkerPool.stop()] : [],
+  drain: [
+    ...(plan.scanWorkerEnabled ? [() => scanWorkerPool.stop()] : []),
+    () => dlqAutoRetryWorker.stop(),
+  ],
   timeoutMs: 10000,
   onShutdownComplete: () => {
     server.close();

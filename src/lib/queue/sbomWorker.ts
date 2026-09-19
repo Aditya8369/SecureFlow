@@ -13,7 +13,7 @@ import prisma from "@/lib/prisma";
 import { isSupportedManifest, parseManifestFile } from "@/lib/sbom/dependency-parser";
 import { matchVulnerabilities } from "@/lib/sbom/vulnerability-matcher";
 import { sbomDLQ, SbomJobData, SBOM_QUEUE_NAME } from "./sbomQueue";
-import type { SbomScanResult } from "@/types/sbom";
+import type { SbomScanResult, VulnerabilityMatch } from "@/types/sbom";
 import { sanitizeAuditLogInput } from "@/lib/audit/minimization";
 import { createLogger } from "@/lib/logger";
 import { computeFingerprint } from "@/lib/armor/fingerprint";
@@ -27,9 +27,40 @@ export const DEFAULT_SBOM_CONCURRENCY = 5;
 /**
  * Recover the persisted result of an already-completed ScanJob without reprocessing.
  */
+/**
+ * The snippet this worker stores for a dependency finding (see step 6 below):
+ * `Dependency: <name>@<version>\nPatched: <version | Unknown>`. The name match is
+ * greedy so a scoped npm package (`@scope/pkg@1.0.0`) splits at its last `@`.
+ */
+const DEPENDENCY_SNIPPET = /^Dependency: (.+)@([^@\n]+)\nPatched: (.*)$/;
+
+/** Rebuild one match from a stored dependency finding. */
+function recoveredMatch(
+  finding: { codeSnippet?: string | null; explanation?: string | null; severity: string },
+  fileName: string,
+): VulnerabilityMatch {
+  const [, name = "unknown", version = "unknown", patched] =
+    DEPENDENCY_SNIPPET.exec(finding.codeSnippet ?? "") ?? [];
+
+  return {
+    dependency: {
+      name,
+      version,
+      manifestFile: fileName,
+      ecosystem: fileName.endsWith("package.json") ? "npm" : "pypi",
+    },
+    cveId: finding.explanation?.match(/CVE-[A-Za-z0-9-]+/)?.[0] || "CVE-UNKNOWN",
+    severity: finding.severity as VulnerabilityMatch["severity"],
+    description: finding.explanation || "",
+    patchedVersion: patched && patched !== "Unknown" ? patched : null,
+  };
+}
+
 async function recoverCompletedResult(
   scanJobId: string,
-  pullRequestId?: string | null,
+  pullRequestId: string | null | undefined,
+  fileName: string,
+  vulnerabilitiesFound?: number | null,
 ): Promise<SbomScanResult> {
   // 1. Try Redis cache (ephemeral acceleration)
   if (redis && typeof redis.get === "function") {
@@ -68,30 +99,29 @@ async function recoverCompletedResult(
     });
   }
 
-  // 3. Recover from durable ScanResult and Findings if pullRequest is associated
+  // 3. Recover from durable ScanResult and Findings if pullRequest is associated.
+  //
+  // Only this manifest's dependency findings. The latest ScanResult on the pull
+  // request is not necessarily this job's: the code scan writes one too (with
+  // SECRET / MISCONFIG findings), and a pull request that changes two manifests
+  // gets one SBOM ScanResult per manifest. Taking the latest one whole reported
+  // another scan's findings as this job's result.
   if (pullRequestId) {
+    const ownFindings = { fileLocation: fileName, type: "VULNERABILITY" as const };
     try {
       const scanResult = await prisma.scanResult.findFirst({
-        where: { pullRequestId },
+        where: { pullRequestId, findings: { some: ownFindings } },
         orderBy: { createdAt: "desc" },
-        include: { findings: true },
+        include: { findings: { where: ownFindings } },
       });
-      if (scanResult) {
+      if (scanResult && scanResult.findings.length > 0) {
+        const vulnerabilities = scanResult.findings.map((f: any) => recoveredMatch(f, fileName));
         return {
           scanId: scanJobId,
           timestamp: scanResult.createdAt,
           totalDependencies: 0,
-          vulnerabilities: scanResult.findings.map((f: any) => ({
-            dependency: {
-              name: f.codeSnippet?.split("@")[0]?.replace("Dependency: ", "") || "unknown",
-              version: f.codeSnippet?.split("@")[1]?.split("\n")[0] || "unknown",
-            },
-            cveId: f.explanation?.match(/CVE-[A-Za-z0-9-]+/)?.[0] || "CVE-UNKNOWN",
-            severity: f.severity as any,
-            description: f.explanation || "",
-            patchedVersion: f.remediation?.replace(/Update .* to version | or higher\./g, "") || "",
-          })),
-          status: scanResult.policyDecision === "BLOCK" ? "VULNERABLE" : "CLEAN",
+          vulnerabilities,
+          status: "VULNERABLE",
         };
       }
     } catch (err) {
@@ -100,6 +130,18 @@ async function recoverCompletedResult(
         error: (err as Error).message,
       });
     }
+  }
+
+  // A completed scan that found nothing stores no findings to recover, but its
+  // ScanJob row says so, and that is the whole result.
+  if (vulnerabilitiesFound === 0) {
+    return {
+      scanId: scanJobId,
+      timestamp: new Date(),
+      totalDependencies: 0,
+      vulnerabilities: [],
+      status: "CLEAN",
+    };
   }
 
   // 4. If result genuinely cannot be recovered, raise terminal error rather than silently reprocessing
@@ -131,7 +173,12 @@ export async function processSbomJob(job: Job<SbomJobData>): Promise<SbomScanRes
   // 2. Idempotency check: if this scan is already COMPLETED, recover result without reprocessing
   if (existingJob.status === "COMPLETED") {
     log.info("SBOM scan job already completed, recovering durable result", { scanJobId });
-    return await recoverCompletedResult(scanJobId, effectivePrId);
+    return await recoverCompletedResult(
+      scanJobId,
+      effectivePrId,
+      fileName,
+      existingJob.vulnerabilitiesFound,
+    );
   }
 
   // 3. Concurrency-safe transition to PROCESSING
@@ -151,7 +198,12 @@ export async function processSbomJob(job: Job<SbomJobData>): Promise<SbomScanRes
     const current = await prisma.scanJob.findUnique({ where: { id: scanJobId } });
     if (current?.status === "COMPLETED") {
       log.info("SBOM scan job completed concurrently, recovering durable result", { scanJobId });
-      return await recoverCompletedResult(scanJobId, effectivePrId);
+      return await recoverCompletedResult(
+        scanJobId,
+        effectivePrId,
+        fileName,
+        current.vulnerabilitiesFound,
+      );
     }
     if (current?.status === "PROCESSING") {
       log.info("SBOM scan job already PROCESSING by another worker", { scanJobId });
@@ -200,7 +252,7 @@ export async function processSbomJob(job: Job<SbomJobData>): Promise<SbomScanRes
 
     // 5. Perform dependency parsing and vulnerability matching
     const dependencies = parseManifestFile(content, fileName);
-    const vulnerabilities = matchVulnerabilities(dependencies);
+    const vulnerabilities = await matchVulnerabilities(dependencies);
 
     const result: SbomScanResult = {
       scanId: scanJobId,
@@ -340,6 +392,17 @@ export async function processSbomJob(job: Job<SbomJobData>): Promise<SbomScanRes
             error: errorMessage,
             completedAt: new Date(),
           },
+        })
+        .catch(() => {});
+    } else {
+      // Hand the ScanJob back for BullMQ's retry. Left PROCESSING, the retry's
+      // PENDING -> PROCESSING claim above matches no row, the job is taken for
+      // one "already PROCESSING by another worker", and it completes with an
+      // empty CLEAN result while the ScanJob stays PROCESSING for good.
+      await prisma.scanJob
+        .updateMany({
+          where: { id: scanJobId, status: "PROCESSING" },
+          data: { status: "PENDING", startedAt: null },
         })
         .catch(() => {});
     }

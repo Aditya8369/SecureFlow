@@ -38,7 +38,7 @@ export function toGenkitGroqModel(modelId: string): string {
  * the heist transmission (which runs on `DEFAULT_SECURITY_CONFIG.modelName`)
  * used a different model from the one documented for it.
  */
-export const DEFAULT_GROQ_MODEL_ID = process.env.GROQ_MODEL || "openai/gpt-oss-20b";
+export const DEFAULT_GROQ_MODEL_ID = "openai/gpt-oss-20b";
 
 /** `GROQ_MODEL` as a Genkit model reference, or undefined when it is unset or blank. */
 function configuredGroqModel(): string | undefined {

@@ -1,5 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { addWebhookJob } from "@/lib/queue/webhookQueue";
+
+export const maxDuration = 60; // optionally increase timeout if not already set 
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '10mb',
+    },
+  },
+};
+
 import { withErrorHandler, AppError } from "@/lib/middleware/error-handler";
 import { withRateLimit } from "@/lib/middleware/rate-limit";
 import {

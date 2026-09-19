@@ -16,15 +16,48 @@ describe("GET /api/openapi", () => {
     vi.clearAllMocks();
   });
 
-  it("serves the repository's spec verbatim", async () => {
+  it("serves a 3.1 spec relabelled as 3.0.3", async () => {
     readFile.mockResolvedValue(SPEC);
 
     const response = await GET();
 
     expect(response.status).toBe(200);
-    // Byte-for-byte: Swagger UI parses the YAML itself, so anything this route
-    // rewrote would be a difference between the playground and the real spec.
-    await expect(response.text()).resolves.toBe(SPEC);
+    await expect(response.text()).resolves.toBe(
+      'openapi: 3.0.3\ninfo:\n  title: SecureFlow API\n  version: "1.0.0"\n',
+    );
+  });
+
+  it("changes nothing but the version line", async () => {
+    // Anything else this route rewrote would be a difference between the
+    // playground and the real spec.
+    const body = "info:\n  title: SecureFlow API\npaths: {}\n";
+    readFile.mockResolvedValue(`openapi: 3.1.2\n${body}`);
+
+    const response = await GET();
+
+    await expect(response.text()).resolves.toBe(`openapi: 3.0.3\n${body}`);
+  });
+
+  it("leaves a spec that already declares 3.0 alone", async () => {
+    const spec = "openapi: 3.0.1\ninfo:\n  title: SecureFlow API\n";
+    readFile.mockResolvedValue(spec);
+
+    const response = await GET();
+
+    await expect(response.text()).resolves.toBe(spec);
+  });
+
+  it("rewrites only the top-level version key, not an indented mention of it", async () => {
+    // `^` with the `m` flag anchors to the start of a line, and a nested key is
+    // indented, so prose or examples that quote the version are untouched.
+    const spec = "openapi: 3.1.0\ninfo:\n  description: |\n    openapi: 3.1.0 is quoted here\n";
+    readFile.mockResolvedValue(spec);
+
+    const response = await GET();
+
+    await expect(response.text()).resolves.toBe(
+      "openapi: 3.0.3\ninfo:\n  description: |\n    openapi: 3.1.0 is quoted here\n",
+    );
   });
 
   it("reads openapi.yaml from the project root", async () => {

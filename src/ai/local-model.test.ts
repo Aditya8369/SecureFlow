@@ -143,7 +143,10 @@ describe("createLocalAiInstance", () => {
   });
 
   it("returns the genkit instance", () => {
-    const instance = createLocalAiInstance({ baseUrl: "http://localhost:11434/v1", model: "llama3" });
+    const instance = createLocalAiInstance({
+      baseUrl: "http://localhost:11434/v1",
+      model: "llama3",
+    });
     expect(instance).toEqual({ id: "mock-local-ai-instance" });
   });
 });

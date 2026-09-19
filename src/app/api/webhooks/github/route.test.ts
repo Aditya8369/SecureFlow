@@ -91,7 +91,8 @@ vi.mock("@/lib/middleware/rateLimit", () => ({
 
 // ---- Imports (after mocks) ----
 
-import { POST, handlePullRequestSynchronize } from "@/app/api/webhooks/github/route";
+import * as webhookRoute from "@/app/api/webhooks/github/route";
+const { POST, handlePullRequestSynchronize } = webhookRoute;
 import { addWebhookJob } from "@/lib/queue/webhookQueue";
 
 // ---- Helpers ----
@@ -439,17 +440,29 @@ describe("GitHub webhook route", () => {
       expect(addWebhookJob).toHaveBeenCalledOnce();
     });
 
-    it("returns 202 and queues pull_request synchronize events", async () => {
+    it("returns 202 and queues pull_request synchronize events without synchronous processing", async () => {
+      const spy = vi.spyOn(webhookRoute, "handlePullRequestSynchronize");
       const body = JSON.stringify({
         action: "synchronize",
         number: 42,
-        pull_request: { head: { sha: "abcdef123456" } },
-        repository: { full_name: "org/repo" },
+        pull_request: { id: 1, number: 42, head: { sha: "abcdef123456" } },
+        repository: { id: 42, full_name: "org/repo" },
+        installation: { id: 99 },
       });
-      const req = makeRequest(body, {}, "pull_request");
+      const req = makeRequest(body, { "x-github-delivery": "delivery-sync-42" }, "pull_request");
       const res = await POST(req);
       expect(res.status).toBe(202);
-      expect(addWebhookJob).toHaveBeenCalledOnce();
+      expect(await res.json()).toMatchObject({ status: "queued", deliveryId: "delivery-sync-42" });
+      expect(addWebhookJob).toHaveBeenCalledWith(
+        expect.objectContaining({
+          deliveryId: "delivery-sync-42",
+          event: "pull_request",
+          payload: expect.objectContaining({ action: "synchronize" }),
+        }),
+        { jobId: "delivery-delivery-sync-42" },
+      );
+      // Ensure no duplicate synchronous execution occurs in the request handler
+      expect(spy).not.toHaveBeenCalled();
     });
 
     it("returns 202 and queues branch_protection_rule events", async () => {
@@ -472,6 +485,25 @@ describe("GitHub webhook route", () => {
         expect.objectContaining({ deliveryId, event: "pull_request" }),
         expect.objectContaining({ jobId: `delivery-${deliveryId}` }),
       );
+    });
+
+    it("ensures duplicate delivery IDs map to identical deterministic job IDs for idempotency", async () => {
+      const deliveryId = "delivery-duplicate-test-abc123";
+      const req1 = makeRequest(minimalPRPayload, { "x-github-delivery": deliveryId });
+      const req2 = makeRequest(minimalPRPayload, { "x-github-delivery": deliveryId });
+
+      const res1 = await POST(req1);
+      const res2 = await POST(req2);
+
+      expect(res1.status).toBe(202);
+      expect(res2.status).toBe(202);
+      expect(addWebhookJob).toHaveBeenCalledTimes(2);
+      expect(addWebhookJob).toHaveBeenNthCalledWith(1, expect.objectContaining({ deliveryId }), {
+        jobId: `delivery-${deliveryId}`,
+      });
+      expect(addWebhookJob).toHaveBeenNthCalledWith(2, expect.objectContaining({ deliveryId }), {
+        jobId: `delivery-${deliveryId}`,
+      });
     });
   });
 

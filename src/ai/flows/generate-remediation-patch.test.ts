@@ -2,13 +2,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const { mockGenerate } = vi.hoisted(() => ({ mockGenerate: vi.fn() }));
 
-// defineFlow returns the handler itself, so the tests call the flow body directly
-// without starting Genkit or loading the Groq plugin.
 vi.mock("@/ai/genkit", () => ({
   ai: {
     defineFlow: (_config: unknown, handler: unknown) => handler,
     generate: (...args: unknown[]) => mockGenerate(...args),
   },
+  getAiInstance: () => ({
+    generate: (...args: unknown[]) => mockGenerate(...args),
+  }),
+  getDefaultModelRef: () => "mock-security-model",
   securityExplanationModel: "mock-security-model",
 }));
 

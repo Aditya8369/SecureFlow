@@ -43,7 +43,7 @@ Provide ONLY the unified diff patch that fixes this issue securely. Do not inclu
 
 `;
 
-try {
+    try {
       const { output } = await activeAi.generate({
         model: activeModel as any,
         prompt: prompt,

@@ -17,10 +17,31 @@ vi.mock("@/lib/middleware/rate-limit", () => ({
   },
 }));
 
-vi.mock("@/lib/middleware/error-handler", () => ({
-  withErrorHandler: (fn: unknown) => fn,
-  AppError: class AppError extends Error {},
-}));
+vi.mock("@/lib/middleware/error-handler", () => {
+  const AppError = class AppError extends Error {
+    statusCode: number;
+    constructor(msg: string, code = 400) {
+      super(msg);
+      this.statusCode = code;
+    }
+  };
+  return {
+    withErrorHandler:
+      (fn: (...args: unknown[]) => unknown) =>
+      async (...args: unknown[]) => {
+        try {
+          return await fn(...args);
+        } catch (err: unknown) {
+          const e = err as { statusCode?: number; message?: string };
+          return {
+            status: e.statusCode || 500,
+            json: async () => ({ error: e.message }),
+          };
+        }
+      },
+    AppError,
+  };
+});
 
 import { POST } from "./route";
 
@@ -31,7 +52,7 @@ function post(body: unknown): Promise<Response> {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     }),
-  );
+  ) as unknown as Promise<Response>;
 }
 
 describe("POST /api/cli/scan", () => {

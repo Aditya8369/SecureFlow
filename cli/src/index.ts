@@ -23,9 +23,12 @@ const LOCAL_FLAG = process.argv.includes("--local");
 if (LOCAL_FLAG) {
   const localFlagIndex = process.argv.findIndex((a) => a === "--local");
   const nextArg = process.argv[localFlagIndex + 1];
-  
+
   // Check if the argument after --local is a URL (starts with http:// or https://)
-  const customUrl = nextArg && (nextArg.startsWith("http://") || nextArg.startsWith("https://")) ? nextArg : undefined;
+  const customUrl =
+    nextArg && (nextArg.startsWith("http://") || nextArg.startsWith("https://"))
+      ? nextArg
+      : undefined;
 
   const modelIdx = process.argv.findIndex((a) => a === "--local-model");
   const localModel = modelIdx !== -1 ? process.argv[modelIdx + 1] : undefined;

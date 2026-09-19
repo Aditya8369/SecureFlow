@@ -89,10 +89,7 @@ export function extractSeverity(vuln: OsvVulnerability): SeverityLevel {
   return "MEDIUM";
 }
 
-export function extractFixedVersion(
-  vuln: OsvVulnerability,
-  packageName: string,
-): string | null {
+export function extractFixedVersion(vuln: OsvVulnerability, packageName: string): string | null {
   const lowerName = packageName.toLowerCase();
 
   for (const affected of vuln.affected ?? []) {
@@ -117,9 +114,7 @@ export function extractFixedVersion(
 
 // ── Per-dependency query ───────────────────────────────────────────────
 
-export async function queryOsvForDependency(
-  dep: Dependency,
-): Promise<OsvVulnerability[]> {
+export async function queryOsvForDependency(dep: Dependency): Promise<OsvVulnerability[]> {
   const ecosystem = mapEcosystem(dep.ecosystem);
   if (!ecosystem || !dep.version || dep.version === "unknown") return [];
 
@@ -143,18 +138,13 @@ export async function queryOsvForDependency(
 
 // ── Map vulns → VulnerabilityMatch[] ───────────────────────────────────
 
-export function mapOsvVulns(
-  dep: Dependency,
-  vulns: OsvVulnerability[],
-): VulnerabilityMatch[] {
+export function mapOsvVulns(dep: Dependency, vulns: OsvVulnerability[]): VulnerabilityMatch[] {
   return vulns.map((vuln) => ({
     dependency: dep,
     cveId: extractCveId(vuln),
     severity: extractSeverity(vuln),
     description:
-      vuln.summary ??
-      vuln.details?.slice(0, 200) ??
-      `Known vulnerability in ${dep.name}`,
+      vuln.summary ?? vuln.details?.slice(0, 200) ?? `Known vulnerability in ${dep.name}`,
     patchedVersion: extractFixedVersion(vuln, dep.name),
   }));
 }

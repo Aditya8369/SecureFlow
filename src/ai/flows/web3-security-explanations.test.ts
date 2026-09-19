@@ -29,7 +29,8 @@ const BASE_INPUT = {
   severity: "HIGH",
   description: "Reentrancy vulnerability detected",
   fileLocation: "contracts/Vault.sol",
-  codeSnippet: "function withdraw() external { (bool ok,) = msg.sender.call{value: bal}(''); bal = 0; }",
+  codeSnippet:
+    "function withdraw() external { (bool ok,) = msg.sender.call{value: bal}(''); bal = 0; }",
 };
 
 beforeEach(() => {
@@ -103,7 +104,10 @@ describe("web3SecurityExplanation — happy path", () => {
   });
 
   it("returns explanation for a ZK circuit finding", async () => {
-    mockResponse("Signal is not constrained, allowing a malicious prover to cheat.", "Add constraint.");
+    mockResponse(
+      "Signal is not constrained, allowing a malicious prover to cheat.",
+      "Add constraint.",
+    );
 
     const result = await web3SecurityExplanation({
       ...BASE_INPUT,
@@ -239,8 +243,6 @@ describe("web3SecurityExplanation — error handling", () => {
   });
 
   it("validates input schema and throws on invalid input", async () => {
-    await expect(
-      web3SecurityExplanation({ findingType: "X" } as any),
-    ).rejects.toThrow();
+    await expect(web3SecurityExplanation({ findingType: "X" } as any)).rejects.toThrow();
   });
 });

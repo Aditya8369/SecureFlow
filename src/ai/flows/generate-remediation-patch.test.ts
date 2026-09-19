@@ -8,7 +8,10 @@ vi.mock("@/ai/genkit", () => ({
 }));
 
 import { getAiInstance, getDefaultModelRef } from "@/ai/genkit";
-import { generateRemediationPatch, generateRemediationPatchFlow } from "./generate-remediation-patch";
+import {
+  generateRemediationPatch,
+  generateRemediationPatchFlow,
+} from "./generate-remediation-patch";
 
 const VALID_INPUT = {
   vulnerableCode: "const query = 'SELECT * FROM users WHERE id = ' + userId;",
@@ -17,7 +20,8 @@ const VALID_INPUT = {
 };
 
 const MOCK_OUTPUT = {
-  patchDiff: "--- a/src/db.ts\n+++ b/src/db.ts\n@@ -1 +1 @@\n-const query = ...\n+const query = ...",
+  patchDiff:
+    "--- a/src/db.ts\n+++ b/src/db.ts\n@@ -1 +1 @@\n-const query = ...\n+const query = ...",
   explanation: "Replaced string concatenation with a parameterized query.",
 };
 
@@ -82,9 +86,7 @@ describe("generateRemediationPatch", () => {
   });
 
   it("throws on invalid input (missing required fields)", async () => {
-    await expect(
-      generateRemediationPatch({ vulnerableCode: "x" } as any),
-    ).rejects.toThrow();
+    await expect(generateRemediationPatch({ vulnerableCode: "x" } as any)).rejects.toThrow();
   });
 });
 

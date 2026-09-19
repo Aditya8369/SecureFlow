@@ -126,6 +126,15 @@ function makeRequest(
         }
         return null;
       },
+      has: (k: string) => {
+        const lower = k.toLowerCase();
+        for (const [key, value] of Object.entries(headers)) {
+          if (key.toLowerCase() === lower && value !== null && value !== undefined) {
+            return true;
+          }
+        }
+        return false;
+      },
     },
     text: vi.fn(async () => body),
     json: vi.fn(async () => JSON.parse(body)),

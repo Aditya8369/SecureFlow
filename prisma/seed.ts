@@ -135,10 +135,7 @@ async function main() {
         action: "DENY",
         isDefault: false,
         rules: {
-          conditions: [
-            "web3/solidity/tx_origin_auth",
-            "web3/solidity/tx_origin_access_control",
-          ],
+          conditions: ["web3/solidity/tx_origin_auth", "web3/solidity/tx_origin_access_control"],
         },
       },
       {

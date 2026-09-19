@@ -4,7 +4,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Mocks — must be declared before any imports that touch the mocked modules
 // ---------------------------------------------------------------------------
 
-const mockGenerateStream = vi.fn();
+const { mockGenerateStream } = vi.hoisted(() => ({
+  mockGenerateStream: vi.fn(),
+}));
 
 vi.mock("@/ai/genkit", () => ({
   getAiInstance: vi.fn(() => ({ generateStream: mockGenerateStream })),

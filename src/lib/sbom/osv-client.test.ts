@@ -388,9 +388,7 @@ describe("osv-client", () => {
 
       await queryOsvForDependency(dep);
 
-      const body = JSON.parse(
-        vi.mocked(globalThis.fetch).mock.calls[0][1]!.body as string,
-      );
+      const body = JSON.parse(vi.mocked(globalThis.fetch).mock.calls[0][1]!.body as string);
       expect(body.package.ecosystem).toBe("PyPI");
     });
   });

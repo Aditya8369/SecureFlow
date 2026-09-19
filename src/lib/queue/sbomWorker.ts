@@ -200,7 +200,7 @@ export async function processSbomJob(job: Job<SbomJobData>): Promise<SbomScanRes
 
     // 5. Perform dependency parsing and vulnerability matching
     const dependencies = parseManifestFile(content, fileName);
-    const vulnerabilities = matchVulnerabilities(dependencies);
+    const vulnerabilities = await matchVulnerabilities(dependencies);
 
     const result: SbomScanResult = {
       scanId: scanJobId,

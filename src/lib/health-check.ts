@@ -7,6 +7,7 @@
  */
 
 import prisma from "@/lib/prisma";
+import { scrubSensitiveData } from "@/lib/redaction";
 
 export type ComponentStatus = "healthy" | "degraded" | "down";
 
@@ -40,7 +41,7 @@ async function probeDatabase(): Promise<ComponentHealth> {
       name: "PostgreSQL",
       status: "down",
       latencyMs: Date.now() - t0,
-      message: e?.message?.slice(0, 200) ?? "Unknown database error",
+      message: scrubSensitiveData(e?.message?.slice(0, 200) ?? "Unknown database error"),
     };
   }
 }
@@ -60,7 +61,7 @@ async function probeRedis(): Promise<ComponentHealth> {
       name: "Redis",
       status: "degraded",
       latencyMs: Date.now() - t0,
-      message: e?.message?.slice(0, 200) ?? "Connection failed",
+      message: scrubSensitiveData(e?.message?.slice(0, 200) ?? "Connection failed"),
     };
   }
 }
@@ -93,7 +94,7 @@ async function probeGroq(): Promise<ComponentHealth> {
       name: "Groq LLM",
       status: "degraded",
       latencyMs: Date.now() - t0,
-      message: e?.message?.slice(0, 200) ?? "Connection failed",
+      message: scrubSensitiveData(e?.message?.slice(0, 200) ?? "Connection failed"),
     };
   }
 }

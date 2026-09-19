@@ -1,19 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 
-const { authMock, findingFindUnique, patchUpsert, generatePatchMock } = vi.hoisted(() => ({
-  authMock: vi.fn(),
-  findingFindUnique: vi.fn(),
-  patchUpsert: vi.fn(),
-  generatePatchMock: vi.fn(),
-}));
+// ---------------------------------------------------------------------------
+// Mocks
+// ---------------------------------------------------------------------------
 
-vi.mock("@/auth", () => ({ auth: authMock }));
+let mockSession: { user: { id: string } } | null = { user: { id: "user-1" } };
+
+vi.mock("@/auth", () => ({ auth: vi.fn(async () => mockSession) }));
+
+const mockFindFirst = vi.hoisted(() => vi.fn());
+const mockUpsert = vi.hoisted(() => vi.fn());
+const generatePatchMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/prisma", () => ({
   default: {
-    finding: { findUnique: findingFindUnique },
-    remediationPatch: { upsert: patchUpsert },
+    finding: { findFirst: mockFindFirst },
+    remediationPatch: { upsert: mockUpsert },
   },
 }));
 
@@ -22,144 +25,182 @@ vi.mock("@/ai/flows/generate-remediation-patch", () => ({
 }));
 
 vi.mock("@/lib/middleware/rate-limit", () => ({
-  TIERS: { AI_STREAM: { limit: 20, windowSeconds: 60, fallbackStrategy: "fail-closed" } },
-  withRateLimit: <T>(handler: T): T => handler,
+  withRateLimit: vi.fn((handler: any) => handler),
+  TIERS: { AI_STREAM: { limit: 10, windowSeconds: 60 } },
+}));
+
+vi.mock("@/lib/middleware/error-handler", () => ({
+  withErrorHandler: vi.fn((handler: any) => handler),
+  AppError: class AppError extends Error {
+    constructor(
+      message: string,
+      public statusCode: number,
+    ) {
+      super(message);
+    }
+  },
 }));
 
 import { POST } from "./route";
 
-const mockFinding = {
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function makeRequest(id: string) {
+  return new NextRequest(`http://localhost/api/findings/${id}/remediate`, {
+    method: "POST",
+  });
+}
+
+const FINDING = {
   id: "finding-1",
-  type: "VULNERABILITY",
-  fileLocation: "src/auth.ts",
-  codeSnippet: "const token = jwt.decode(t);",
-  explanation: "Unverified token payload",
-  remediation: "Verify signature with jwt.verify",
-  scanResult: {
-    pullRequest: {
-      repository: {
-        userId: "user-1",
-      },
-    },
-  },
+  codeSnippet: "db.query('SELECT * FROM users WHERE id = ' + id)",
+  description: "SQL injection via string concatenation",
+  fileLocation: "src/db.ts",
 };
 
-describe("POST /api/findings/[id]/remediate", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    authMock.mockResolvedValue({ user: { id: "user-1" } });
-    findingFindUnique.mockResolvedValue(mockFinding);
-    generatePatchMock.mockResolvedValue({
-      patchDiff: "--- a/src/auth.ts\n+++ b/src/auth.ts\n@@ -1 +1 @@\n-jwt.decode\n+jwt.verify",
-      explanation: "Verify token signature",
-    });
-    patchUpsert.mockImplementation(async ({ where, create, update }) => ({
-      ...create,
-      ...update,
-      id: `patch-${where.findingId}`,
-    }));
+const PATCH = {
+  id: "patch-1",
+  findingId: "finding-1",
+  patchDiff: "--- a/src/db.ts\n+++ b/src/db.ts",
+  status: "GENERATED",
+};
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockSession = { user: { id: "user-1" } };
+  mockFindFirst.mockResolvedValue(FINDING);
+  mockUpsert.mockResolvedValue(PATCH);
+  generatePatchMock.mockResolvedValue({
+    patchDiff: "--- a/src/db.ts\n+++ b/src/db.ts",
+    explanation: "Use parameterized queries.",
   });
+});
 
-  it("returns 401 if caller is unauthenticated", async () => {
-    authMock.mockResolvedValue(null);
-    const req = new NextRequest("http://localhost:3000/api/findings/finding-1/remediate", {
-      method: "POST",
-    });
-    const res = await POST(req, { params: Promise.resolve({ id: "finding-1" }) });
+// ---------------------------------------------------------------------------
+// Authentication
+// ---------------------------------------------------------------------------
 
-    expect(res.status).toBe(401);
-    const data = await res.json();
-    expect(data.error).toBe("Unauthorized");
+describe("POST /api/findings/[id]/remediate — authentication", () => {
+  it("throws 401 when no session", async () => {
+    mockSession = null;
+
+    await expect(
+      POST(makeRequest("finding-1"), { params: Promise.resolve({ id: "finding-1" }) }),
+    ).rejects.toMatchObject({ statusCode: 401 });
+
+    expect(mockFindFirst).not.toHaveBeenCalled();
   });
+});
 
-  it("returns 404 if finding is not found", async () => {
-    findingFindUnique.mockResolvedValue(null);
-    const req = new NextRequest("http://localhost:3000/api/findings/finding-missing/remediate", {
-      method: "POST",
-    });
-    const res = await POST(req, { params: Promise.resolve({ id: "finding-missing" }) });
+// ---------------------------------------------------------------------------
+// Ownership check (IDOR/BOLA fix)
+// ---------------------------------------------------------------------------
 
-    expect(res.status).toBe(404);
-    const data = await res.json();
-    expect(data.error).toBe("Finding not found");
-  });
+describe("POST /api/findings/[id]/remediate — ownership check", () => {
+  it("scopes the finding lookup to the session userId via relation chain", async () => {
+    await POST(makeRequest("finding-1"), { params: Promise.resolve({ id: "finding-1" }) });
 
-  it("returns 403 Forbidden if finding belongs to another user (prevents IDOR)", async () => {
-    findingFindUnique.mockResolvedValue({
-      ...mockFinding,
-      scanResult: {
-        pullRequest: {
-          repository: {
-            userId: "user-other",
-          },
-        },
-      },
-    });
-
-    const req = new NextRequest("http://localhost:3000/api/findings/finding-1/remediate", {
-      method: "POST",
-    });
-    const res = await POST(req, { params: Promise.resolve({ id: "finding-1" }) });
-
-    expect(res.status).toBe(403);
-    const data = await res.json();
-    expect(data.error).toMatch(/Forbidden: You do not have access to this finding/i);
-    expect(generatePatchMock).not.toHaveBeenCalled();
-    expect(patchUpsert).not.toHaveBeenCalled();
-  });
-
-  it("generates remediation patch and persists it when user owns repository", async () => {
-    const req = new NextRequest("http://localhost:3000/api/findings/finding-1/remediate", {
-      method: "POST",
-    });
-    const res = await POST(req, { params: Promise.resolve({ id: "finding-1" }) });
-
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.success).toBe(true);
-    expect(data.explanation).toBe("Verify token signature");
-    expect(data.patch.patchDiff).toContain("--- a/src/auth.ts");
-
-    expect(findingFindUnique).toHaveBeenCalledWith({
-      where: { id: "finding-1" },
-      select: expect.objectContaining({
-        id: true,
-        type: true,
-        codeSnippet: true,
-        fileLocation: true,
-        explanation: true,
-        remediation: true,
-        scanResult: {
-          select: {
+    expect(mockFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          id: "finding-1",
+          scanResult: {
             pullRequest: {
-              select: {
-                repository: {
-                  select: { userId: true },
-                },
-              },
+              repository: { userId: "user-1" },
             },
           },
         },
       }),
+    );
+  });
+
+  it("throws 404 when finding belongs to a different user (not 403 — no oracle)", async () => {
+    mockFindFirst.mockResolvedValue(null);
+
+    await expect(
+      POST(makeRequest("other-users-finding"), {
+        params: Promise.resolve({ id: "other-users-finding" }),
+      }),
+    ).rejects.toMatchObject({ statusCode: 404 });
+
+    expect(generatePatchMock).not.toHaveBeenCalled();
+  });
+
+  it("throws 404 when finding does not exist", async () => {
+    mockFindFirst.mockResolvedValue(null);
+
+    await expect(
+      POST(makeRequest("nonexistent"), { params: Promise.resolve({ id: "nonexistent" }) }),
+    ).rejects.toMatchObject({ statusCode: 404 });
+
+    expect(generatePatchMock).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Correct field name (fileLocation not filePath)
+// ---------------------------------------------------------------------------
+
+describe("POST /api/findings/[id]/remediate — field name fix", () => {
+  it("passes finding.fileLocation (not filePath) to the AI flow", async () => {
+    await POST(makeRequest("finding-1"), { params: Promise.resolve({ id: "finding-1" }) });
+
+    expect(generatePatchMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filePath: "src/db.ts",
+      }),
+    );
+  });
+
+  it("passes codeSnippet and description to the AI flow", async () => {
+    await POST(makeRequest("finding-1"), { params: Promise.resolve({ id: "finding-1" }) });
+
+    expect(generatePatchMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        vulnerableCode: FINDING.codeSnippet,
+        findingDescription: FINDING.description,
+      }),
+    );
+  });
+
+  it("uses empty string for codeSnippet when null", async () => {
+    mockFindFirst.mockResolvedValue({ ...FINDING, codeSnippet: null });
+
+    await POST(makeRequest("finding-1"), { params: Promise.resolve({ id: "finding-1" }) });
+
+    expect(generatePatchMock).toHaveBeenCalledWith(
+      expect.objectContaining({ vulnerableCode: "" }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Happy path
+// ---------------------------------------------------------------------------
+
+describe("POST /api/findings/[id]/remediate — happy path", () => {
+  it("upserts the patch with the AI result", async () => {
+    await POST(makeRequest("finding-1"), { params: Promise.resolve({ id: "finding-1" }) });
+
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { findingId: "finding-1" },
+        update: expect.objectContaining({ status: "GENERATED" }),
+        create: expect.objectContaining({ findingId: "finding-1", status: "GENERATED" }),
+      }),
+    );
+  });
+
+  it("returns success:true with patch and explanation", async () => {
+    const response = await POST(makeRequest("finding-1"), {
+      params: Promise.resolve({ id: "finding-1" }),
     });
 
-    expect(generatePatchMock).toHaveBeenCalledWith({
-      vulnerableCode: "const token = jwt.decode(t);",
-      findingDescription: "Unverified token payload",
-      filePath: "src/auth.ts",
-    });
-
-    expect(patchUpsert).toHaveBeenCalledWith({
-      where: { findingId: "finding-1" },
-      update: {
-        patchDiff: "--- a/src/auth.ts\n+++ b/src/auth.ts\n@@ -1 +1 @@\n-jwt.decode\n+jwt.verify",
-        status: "GENERATED",
-      },
-      create: {
-        findingId: "finding-1",
-        patchDiff: "--- a/src/auth.ts\n+++ b/src/auth.ts\n@@ -1 +1 @@\n-jwt.decode\n+jwt.verify",
-        status: "GENERATED",
-      },
-    });
+    const body = await response.json();
+    expect(body.success).toBe(true);
+    expect(body.patch).toEqual(PATCH);
+    expect(body.explanation).toBe("Use parameterized queries.");
   });
 });

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   computeNextRetryAt,
+  dlqRetryStateFor,
   isRetryDue,
   retryDlqJob,
   createDlqAutoRetryWorker,
@@ -214,6 +215,26 @@ describe("retryDlqJob", () => {
     expect(typeof addCall[1].nextRetryAt).toBe("string");
   });
 
+  it("carries the incremented count on the requeued job, so a re-failure keeps it", async () => {
+    const job = makeJob({ data: validPayload(), autoRetryCount: 2 });
+
+    await retryDlqJob(job);
+
+    const [payload] = vi.mocked(addWebhookJob).mock.calls[0];
+    expect(payload).toEqual({ ...validPayload(), dlqAutoRetryCount: 3 });
+  });
+
+  it("does not duplicate the entry when removing it from the DLQ fails", async () => {
+    const job = makeJob({ data: validPayload(), autoRetryCount: 1 });
+    job.remove.mockRejectedValueOnce(new Error("Job is locked"));
+
+    const outcome = await retryDlqJob(job);
+
+    expect(outcome).toMatchObject({ result: "failed", reason: "Job is locked" });
+    expect(addWebhookJob).not.toHaveBeenCalled();
+    expect(webhookDLQ.add).not.toHaveBeenCalled();
+  });
+
   it("passes the delivery-id-keyed jobId to addWebhookJob for idempotency", async () => {
     const job = makeJob({ data: validPayload() });
 
@@ -232,6 +253,53 @@ describe("retryDlqJob", () => {
     expect(outcome.result).toBe("requeued");
     const [, options] = vi.mocked(addWebhookJob).mock.calls[0];
     expect(options?.jobId).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// dlqRetryStateFor — what the worker writes when a requeued job fails again
+// ---------------------------------------------------------------------------
+
+describe("dlqRetryStateFor", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("adds nothing for a delivery the auto-retry worker never requeued", () => {
+    expect(dlqRetryStateFor(undefined)).toEqual({});
+    expect(dlqRetryStateFor(0)).toEqual({});
+    expect(dlqRetryStateFor("3")).toEqual({});
+    expect(dlqRetryStateFor(1.5)).toEqual({});
+  });
+
+  it("keeps the count and schedules the next attempt with backoff", () => {
+    expect(dlqRetryStateFor(2)).toEqual({
+      autoRetryCount: 2,
+      nextRetryAt: new Date(Date.now() + BASE_DELAY_MS * 4).toISOString(),
+    });
+  });
+
+  it("stops after MAX_AUTO_RETRY_ATTEMPTS requeue-and-fail cycles", async () => {
+    // Each cycle: the DLQ entry is requeued, the job fails again, and the
+    // worker writes a new entry from the count the job carried.
+    let entry: DlqAutoRetryJobData = { data: validPayload() };
+
+    for (let cycle = 1; cycle <= MAX_AUTO_RETRY_ATTEMPTS; cycle++) {
+      vi.mocked(addWebhookJob).mockClear();
+      vi.setSystemTime(new Date(Date.now() + MAX_DELAY_MS));
+
+      expect((await retryDlqJob(makeJob(entry))).result).toBe("requeued");
+      const [requeued] = vi.mocked(addWebhookJob).mock.calls[0];
+      entry = { data: validPayload(), ...dlqRetryStateFor(requeued.dlqAutoRetryCount) };
+    }
+
+    vi.setSystemTime(new Date(Date.now() + MAX_DELAY_MS));
+    expect((await retryDlqJob(makeJob(entry))).result).toBe("skipped_max_attempts");
   });
 });
 

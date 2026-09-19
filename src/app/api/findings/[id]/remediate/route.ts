@@ -1,3 +1,4 @@
+import { withRateLimit, TIERS } from "@/lib/middleware/rate-limit";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 // 2. Correct default Prisma import
@@ -8,29 +9,51 @@ import { generateRemediationPatchFlow } from "@/ai/flows/generate-remediation-pa
  * POST /api/findings/[id]/remediate
  * Triggers the AI flow to generate a remediation patch for a specific finding.
  */
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+const handler = async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
   try {
     const session = await auth();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    const userId = session.user.id;
 
     const { id } = await params;
     const findingId = id;
     const finding = await prisma.finding.findUnique({
       where: { id: findingId },
-      include: { repository: true },
+      select: {
+        id: true,
+        type: true,
+        codeSnippet: true,
+        fileLocation: true,
+        explanation: true,
+        remediation: true,
+        scanResult: {
+          select: { pullRequest: { select: { repository: { select: { userId: true } } } } },
+        },
+      },
     });
 
     if (!finding) {
       return NextResponse.json({ error: "Finding not found" }, { status: 404 });
     }
 
+    if (finding.scanResult.pullRequest.repository.userId !== userId) {
+      return NextResponse.json(
+        { error: "Forbidden: You do not have access to this finding" },
+        { status: 403 },
+      );
+    }
+
     // Trigger AI flow
     const aiResult = await generateRemediationPatchFlow({
       vulnerableCode: finding.codeSnippet || "",
-      findingDescription: finding.description,
-      filePath: finding.filePath,
+      findingDescription:
+        finding.explanation || finding.remediation || `${finding.type} vulnerability`,
+      filePath: finding.fileLocation,
     });
 
     // Save to database
@@ -45,4 +68,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     console.error("[REMEDIATE_PATCH_ERROR]", error);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
   }
-}
+};
+
+export const POST = withRateLimit(
+  handler as (req: NextRequest, ...args: unknown[]) => Promise<NextResponse>,
+  { ...TIERS.AI_STREAM, keyPrefix: "remediate:ip" },
+) as typeof handler;

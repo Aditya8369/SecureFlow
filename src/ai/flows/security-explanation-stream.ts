@@ -12,6 +12,10 @@ import {
   type AISecurityExplanationOutput,
 } from "./security-explanation-schemas";
 
+
+const groq = new Groq({ apiKey: env.GROQ_API_KEY });
+
+
 interface StreamOptions {
   vulnerabilityId: string;
   sourceCode: string;
@@ -47,7 +51,7 @@ Provide a concise explanation, architectural impact, and immediate remediation s
       ? `${userPrompt}\nContextual Details: ${metadata.description} (CVSS: ${metadata.cvss})`
       : userPrompt;
 
-    const activeAi = getAiInstance();
+const activeAi = getAiInstance();
     const activeModel = getDefaultModelRef();
 
     const { stream } = await activeAi.generateStream({

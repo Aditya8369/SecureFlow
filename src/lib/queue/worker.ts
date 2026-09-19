@@ -24,6 +24,7 @@ import {
   pullRequestUpdateData,
 } from "@/lib/github/pull-request-facts";
 import prisma from "@/lib/prisma";
+import { handlePullRequestSynchronize } from "@/lib/sbom/pull-request-manifests";
 import { sanitizeAuditLogInput } from "@/lib/audit/minimization";
 import { severityBadge, toStoredSeverity, totalRiskScore } from "@/lib/severity";
 import {
@@ -237,6 +238,22 @@ export interface PullRequestContext {
  * pending PR comment had already been posted, leaving a permanent
  * "⏳ Evaluating..." comment that nothing ever updated.
  */
+/**
+ * Whether a delivery should also get a dependency (SBOM) scan of the manifests
+ * it changes.
+ *
+ * Only `synchronize` — new commits on an existing pull request — which is the
+ * trigger the webhook route used when it ran this inline. #927 moved every
+ * delivery to this worker and dropped the route's call, so without this the
+ * manifest scan had no caller at all.
+ */
+export function shouldScanPullRequestManifests(
+  event: string | null | undefined,
+  action: string | null | undefined,
+): boolean {
+  return event === "pull_request" && action === "synchronize";
+}
+
 export function assertPullRequestContext(payload: {
   pull_request?: any;
   repository?: any;
@@ -526,6 +543,13 @@ export const worker = new Worker<WebhookJobData>(
         // cleanly and then throw after the pending PR comment had been posted —
         // leaving a permanent "⏳ Evaluating..." comment nothing ever updated.
         assertPullRequestContext(payload as any);
+
+        if (shouldScanPullRequestManifests(event, action)) {
+          // Never throws (it logs and returns), so a manifest problem cannot
+          // fail the code scan below. SBOM jobs are keyed by head SHA and file,
+          // so a retry of this delivery does not enqueue them twice.
+          await handlePullRequestSynchronize(payload, deliveryId ?? undefined);
+        }
 
         console.log(
           `Processing PR #${sanitize(pull_request.number)} on ${sanitize(repository.full_name)}`,

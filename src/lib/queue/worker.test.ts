@@ -30,6 +30,9 @@ vi.mock("bullmq", () => {
 vi.mock("./redis", () => ({ redis: {} }));
 vi.mock("@/lib/prisma", () => ({ default: {} }));
 vi.mock("@/lib/armor/scanner", () => ({ scanner: {}, parseSecureFlowIgnore: vi.fn() }));
+vi.mock("@/lib/sbom/pull-request-manifests", () => ({
+  handlePullRequestSynchronize: vi.fn(),
+}));
 vi.mock("@/ai/flows/developer-receives-ai-security-explanations", () => ({
   developerReceivesAISecurityExplanations: vi.fn(),
 }));
@@ -42,8 +45,26 @@ import {
   getCommentableLines,
   getGitHubAppCredentials,
   selectRepositoryList,
+  shouldScanPullRequestManifests,
   truncateForError,
 } from "./worker";
+
+describe("shouldScanPullRequestManifests", () => {
+  it("runs the manifest (SBOM) scan for new commits on a pull request", () => {
+    expect(shouldScanPullRequestManifests("pull_request", "synchronize")).toBe(true);
+  });
+
+  it.each([
+    ["pull_request", "closed"],
+    ["pull_request", "labeled"],
+    ["pull_request", undefined],
+    ["installation", "created"],
+    ["branch_protection_rule", "edited"],
+    [null, "synchronize"],
+  ])("skips %s / %s", (event, action) => {
+    expect(shouldScanPullRequestManifests(event, action)).toBe(false);
+  });
+});
 
 describe("Webhook Worker DLQ Routing", () => {
   beforeEach(() => {

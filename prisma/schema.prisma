@@ -61,6 +61,12 @@ model User {
   roles         UserRole[]
   auditLogs     AuditLog[]
 
+  /**
+   * Incoming Slack webhook URL for real-time alerts on CRITICAL/HIGH findings.
+   * Optional — null disables Slack notifications for this user (#936).
+   */
+  slackWebhookUrl String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

@@ -26,6 +26,7 @@ import {
   normalizePrStatusEnum,
 } from "@/lib/finding-taxonomy";
 import { sanitizeLogValue } from "@/lib/logger";
+import { notifyHighSeverityFindings } from "@/lib/integrations/slack";
 
 // Sanitize user-controlled strings before logging to prevent log injection
 // (CWE-117). The implementation moved to src/lib/logger.ts so every module gets
@@ -971,6 +972,27 @@ export const worker = new Worker<WebhookJobData>(
               },
             },
           });
+
+          // Real-time Slack alert for CRITICAL/HIGH findings (#936). Best-effort
+          // and non-throwing, so a Slack outage cannot fail the webhook job or
+          // trigger a BullMQ retry of an already-persisted scan. The severity
+          // threshold is applied inside the integration.
+          if (userId && enrichedFindings.length > 0) {
+            try {
+              const owner = await prisma.user.findUnique({
+                where: { id: userId },
+                select: { slackWebhookUrl: true },
+              });
+
+              await notifyHighSeverityFindings(owner?.slackWebhookUrl, {
+                repositoryFullName: repository.full_name,
+                prNumber: pull_request.number,
+                findings: enrichedFindings,
+              });
+            } catch (err) {
+              console.error(`[Worker] Slack notification step failed:`, err);
+            }
+          }
         }
       }
     }

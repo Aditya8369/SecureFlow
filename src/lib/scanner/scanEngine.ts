@@ -33,6 +33,7 @@ import {
   type EnrichedScanFinding,
 } from "./scan-persistence";
 import { resolvePullRequestRecord, splitRepositoryFullName } from "./pull-request-record";
+import { notifyHighSeverityFindings } from "@/lib/integrations/slack";
 
 /** Maximum files to process in a single batch before yielding. */
 const CHUNK_SIZE = 10;
@@ -382,6 +383,31 @@ export async function processScanJob(
       // of a repository with no findings (#747).
       persistenceError = err instanceof Error ? err.message : String(err);
       console.error(`[ScanEngine] Failed to persist results:`, err);
+    }
+  }
+
+  // --- Phase 7: Real-time Slack alert for high-severity findings (#936) ---
+  //
+  // Runs after persistence so an alert only fires for findings that are already
+  // saved, and is deliberately outside the persist try/catch: it is best-effort
+  // and `notifyHighSeverityFindings` never throws, so a Slack outage cannot turn
+  // a completed scan into a failed one or trigger a BullMQ retry. The threshold
+  // (CRITICAL/HIGH) is decided inside the integration.
+  if (userId && enrichedFindings.length > 0) {
+    try {
+      const owner = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { slackWebhookUrl: true },
+      });
+
+      await notifyHighSeverityFindings(owner?.slackWebhookUrl, {
+        repositoryFullName,
+        prNumber,
+        findings: enrichedFindings,
+      });
+    } catch (err) {
+      // Includes the webhook lookup — a Slack step must never fail the scan.
+      console.error(`[ScanEngine] Slack notification step failed:`, err);
     }
   }
 

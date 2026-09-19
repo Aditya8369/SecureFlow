@@ -1,7 +1,9 @@
 import Redis from "ioredis";
 
+// Not the same key as the queue client in `src/lib/queue/redis.ts`, which is
+// configured for BullMQ (see the note there).
 const globalForRedis = globalThis as unknown as {
-  redis: Redis | undefined;
+  rateLimitRedis: Redis | undefined;
 };
 
 // Use an in-memory fallback if REDIS_URL is not provided (useful for local dev without Docker)
@@ -9,7 +11,7 @@ let redisInstance: Redis | null = null;
 
 if (process.env.REDIS_URL && process.env.REDIS_URL.trim() !== "") {
   redisInstance =
-    globalForRedis.redis ??
+    globalForRedis.rateLimitRedis ??
     new Redis(process.env.REDIS_URL, {
       retryStrategy(times) {
         const delay = Math.min(times * 50, 2000);
@@ -18,7 +20,7 @@ if (process.env.REDIS_URL && process.env.REDIS_URL.trim() !== "") {
       maxRetriesPerRequest: 3,
     });
 
-  if (process.env.NODE_ENV !== "production") globalForRedis.redis = redisInstance;
+  if (process.env.NODE_ENV !== "production") globalForRedis.rateLimitRedis = redisInstance;
 } else {
   console.warn(
     "⚠️ REDIS_URL is not set. Rate limiting will fall back to an in-memory Map (not suitable for production multi-instance).",

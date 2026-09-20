@@ -231,7 +231,7 @@ export default function FindingsToolbar({
             className="gap-2"
           >
             <ListChecks className="h-4 w-4" aria-hidden="true" />
-            {bulkMode ? "Cancel bulk select" : "Bulk select"}
+            {bulkMode ? "Cancel bulk select" : "Bulk select"}`n          </Button>`n        )}`n        {bulkMode && (`n          <Button variant="outline" size="sm" className="gap-2 text-red-500 hover:text-red-600">`n            Rollback Patches`n          </Button>
           </Button>
         )}
       </div>
@@ -272,3 +272,4 @@ export default function FindingsToolbar({
     </div>
   );
 }
+

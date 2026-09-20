@@ -4,6 +4,7 @@ import { GitError, getStagedFiles, readStagedContent } from "./git.js";
 import { scanFile, formatScanResults, type FileScanResult, type OutputFormat } from "./scanner.js";
 
 const VERBOSE = process.argv.includes("--verbose");
+const DRY_RUN = process.argv.includes("--dry-run");
 
 function parseFormatArg(): OutputFormat {
   const formatIndex = process.argv.findIndex((arg) => arg === "--format");
@@ -82,7 +83,12 @@ function main(): number {
   if (format === "sarif" || format === "json") {
     const outputString = formatScanResults(fileResults, format);
     if (outputPath) {
+      if (DRY_RUN) {
+      console.log(`[DRY RUN] Would write to ${outputPath}:
+${outputString}`);
+    } else {
       fs.writeFileSync(outputPath, outputString, "utf-8");
+    }
       console.log(
         `📄 [SecureFlow] Scan report exported in ${format.toUpperCase()} format to ${outputPath}`,
       );
@@ -91,7 +97,12 @@ function main(): number {
     }
   } else if (outputPath) {
     const textOutput = formatScanResults(fileResults, "text");
-    fs.writeFileSync(outputPath, textOutput, "utf-8");
+    if (DRY_RUN) {
+      console.log(`[DRY RUN] Would write to ${outputPath}:
+${textOutput}`);
+    } else {
+      fs.writeFileSync(outputPath, textOutput, "utf-8");
+    }
     console.log(`📄 [SecureFlow] Scan report written to ${outputPath}`);
   }
 

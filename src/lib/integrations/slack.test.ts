@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
+  packSectionBodies,
+  SLACK_SECTION_TEXT_LIMIT,
   SLACK_ALERT_THRESHOLD,
   buildSlackAlert,
   findingsAboveThreshold,
@@ -233,5 +235,98 @@ describe("notifyHighSeverityFindings", () => {
 
     expect(sent).toBe(false);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("Block Kit section limits", () => {
+  /** A finding whose rendered line lands near the 300-character summary cap. */
+  function bigFinding(i: number) {
+    return {
+      type: "HARDCODED_SECRET",
+      severity: "CRITICAL" as const,
+      fileLocation: `packages/services/billing/src/internal/handlers/webhook-${i}.ts`,
+      explanation: "A".repeat(600),
+    };
+  }
+
+  function sectionTexts(message: { blocks: unknown[] }): string[] {
+    return message.blocks
+      .filter((b) => (b as { type?: string }).type === "section")
+      .map((b) => (b as { text: { text: string } }).text.text);
+  }
+
+  it("keeps every section under Slack's text limit for a full page of findings", () => {
+    // Ten findings at the summary cap came to roughly 4,000 characters in one
+    // section. Slack answers 400 invalid_blocks and drops the whole message, so
+    // the alert reporting the most findings was the one that never arrived.
+    const message = buildSlackAlert({
+      repositoryFullName: "acme/app",
+      prNumber: 42,
+      findings: Array.from({ length: 12 }, (_, i) => bigFinding(i)),
+    });
+
+    expect(message).not.toBeNull();
+    for (const text of sectionTexts(message!)) {
+      expect(text.length).toBeLessThanOrEqual(SLACK_SECTION_TEXT_LIMIT);
+    }
+  });
+
+  it("splits rather than drops: every listed finding still appears", () => {
+    const message = buildSlackAlert({
+      repositoryFullName: "acme/app",
+      prNumber: 42,
+      findings: Array.from({ length: 12 }, (_, i) => bigFinding(i)),
+    });
+
+    const body = sectionTexts(message!).join("\n\n");
+    // MAX_LISTED_FINDINGS is 10, and the remaining two are reported as a count.
+    for (let i = 0; i < 10; i++) {
+      expect(body).toContain(`webhook-${i}.ts`);
+    }
+    expect(body).toContain("_…and 2 more._");
+  });
+
+  it("still emits a single section when everything fits", () => {
+    const message = buildSlackAlert({
+      repositoryFullName: "acme/app",
+      prNumber: 42,
+      findings: [
+        {
+          type: "HARDCODED_SECRET",
+          severity: "CRITICAL",
+          fileLocation: "src/a.ts",
+          explanation: "short",
+        },
+      ],
+    });
+
+    // The heading section plus one findings section — no extra blocks.
+    expect(sectionTexts(message!)).toHaveLength(2);
+  });
+});
+
+describe("packSectionBodies", () => {
+  it("packs as many lines per body as fit", () => {
+    expect(packSectionBodies(["aaa", "bbb", "ccc"], 100)).toEqual(["aaa\n\nbbb\n\nccc"]);
+  });
+
+  it("starts a new body when the separator would push it over", () => {
+    // "aaaa" + "\n\n" + "bbbb" is 10, which is over a limit of 9.
+    expect(packSectionBodies(["aaaa", "bbbb"], 9)).toEqual(["aaaa", "bbbb"]);
+  });
+
+  it("clips a single line that cannot fit anywhere, rather than dropping it", () => {
+    const [body] = packSectionBodies(["x".repeat(50)], 10);
+    expect(body).toHaveLength(10);
+    expect(body.endsWith("…")).toBe(true);
+  });
+
+  it("returns nothing for no lines", () => {
+    expect(packSectionBodies([], 100)).toEqual([]);
+  });
+
+  it("defaults to Slack's limit", () => {
+    const [body] = packSectionBodies(["y".repeat(SLACK_SECTION_TEXT_LIMIT + 100)]);
+    expect(body.length).toBe(SLACK_SECTION_TEXT_LIMIT);
   });
 });

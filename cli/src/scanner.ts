@@ -441,12 +441,19 @@ export function parseFailOnArg(args: string[] = process.argv): FailOnSeverity | 
  * Determines whether a scan should return non-zero exit code based on the failOnThreshold.
  *
  * Local secret logging violations are treated as HIGH severity (rank 3).
+ *
+ * `NONE` is advisory mode: findings are still reported, but nothing blocks the
+ * commit. It is deliberately handled before the rank comparison, because its
+ * rank of 0 is below every real severity and would otherwise make *every*
+ * finding clear the bar.
  */
 export function shouldFailScan(
   localViolationCount: number,
   aiFindings: { severity: string }[],
   failOnThreshold: FailOnSeverity | null = null,
 ): boolean {
+  if (failOnThreshold === "NONE") return false;
+
   if (failOnThreshold === null) {
     const aiHighOrCritical = aiFindings.filter(
       (f) => f.severity === "HIGH" || f.severity === "CRITICAL",

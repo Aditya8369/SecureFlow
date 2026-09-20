@@ -228,7 +228,7 @@ model RemediationPatch {
   id        String   @id @default(cuid())
   findingId String   @unique
   finding   Finding  @relation(fields: [findingId], references: [id], onDelete: Cascade)
-  patchDiff String   // Unified diff format
+  patchDiff String // Unified diff format
   status    String   @default("PENDING") // PENDING, GENERATED, APPLIED
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -273,6 +273,7 @@ model AuditLog {
   // otherwise scan the user's rows and sort to produce a dozen strings.
   @@index([userId, action])
   @@index([userId, decision])
+  @@index([action, timestamp(sort: Desc)])
 }
 
 model WebhookEvent {

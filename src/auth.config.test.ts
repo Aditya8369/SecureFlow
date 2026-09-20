@@ -51,6 +51,7 @@ describe("auth.config jwt callback", () => {
       accessToken: "old-access-token",
       accessTokenExpires: Date.now() - 1000,
       refreshToken: "existing-refresh-token",
+      error: "RefreshAccessTokenError",
     };
 
     const result = (await jwt!({ token } as any)) as any;
@@ -66,6 +67,7 @@ describe("auth.config jwt callback", () => {
     expect(result.refreshToken).toBe("new-refresh-token");
     expect(result.accessTokenExpires).toBeGreaterThan(Date.now());
     expect(result.error).toBeUndefined();
+    expect("error" in result).toBe(false);
   });
 
   it("sets backoff timestamp and error when token refresh fails", async () => {

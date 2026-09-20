@@ -9,6 +9,8 @@
 import { describe, it, expect } from "vitest";
 import {
   MAX_SCANNED_BYTES,
+  blockingAiFindings,
+  describeFailThreshold,
   findSecretLogging,
   formatScanResults,
   lineOf,
@@ -335,5 +337,56 @@ describe("shouldFailScan", () => {
     expect(shouldFailScan(0, [{ severity: "HIGH" }], "CRITICAL")).toBe(false);
     expect(shouldFailScan(0, [{ severity: "MEDIUM" }], "MEDIUM")).toBe(true);
     expect(shouldFailScan(0, [{ severity: "LOW" }], "MEDIUM")).toBe(false);
+  });
+});
+
+describe("blockingAiFindings", () => {
+  const findings = [
+    { severity: "CRITICAL" },
+    { severity: "HIGH" },
+    { severity: "MEDIUM" },
+    { severity: "LOW" },
+  ];
+
+  it("returns the HIGH/CRITICAL findings when no threshold is set", () => {
+    expect(blockingAiFindings(findings, null)).toEqual([
+      { severity: "CRITICAL" },
+      { severity: "HIGH" },
+    ]);
+  });
+
+  it("returns every finding at or above an explicit threshold", () => {
+    expect(blockingAiFindings(findings, "MEDIUM")).toHaveLength(3);
+    // A single LOW finding is what blocks under --fail-on=LOW, so the message
+    // has something to report other than "0 secret-logging violations".
+    expect(blockingAiFindings([{ severity: "LOW" }], "LOW")).toHaveLength(1);
+    expect(blockingAiFindings(findings, "CRITICAL")).toEqual([{ severity: "CRITICAL" }]);
+  });
+
+  it("blocks on nothing under NONE", () => {
+    expect(blockingAiFindings(findings, "NONE")).toEqual([]);
+  });
+
+  it("agrees with shouldFailScan about the AI findings", () => {
+    for (const threshold of [null, "CRITICAL", "HIGH", "MEDIUM", "LOW"] as const) {
+      expect(blockingAiFindings(findings, threshold).length > 0).toBe(
+        shouldFailScan(0, findings, threshold),
+      );
+    }
+  });
+
+  it("treats an unrecognised severity as LOW rather than dropping it", () => {
+    expect(blockingAiFindings([{ severity: "" }], "LOW")).toHaveLength(1);
+    expect(blockingAiFindings([{ severity: "critical" }], "CRITICAL")).toHaveLength(1);
+  });
+});
+
+describe("describeFailThreshold", () => {
+  it("names the flag only when the user passed it", () => {
+    expect(describeFailThreshold("LOW")).toBe("the --fail-on=LOW threshold");
+    // Previously this interpolated a null threshold straight into the summary,
+    // which read "below --fail-on=null threshold".
+    expect(describeFailThreshold(null)).toBe("the default HIGH/CRITICAL threshold");
+    expect(describeFailThreshold(null)).not.toContain("null");
   });
 });

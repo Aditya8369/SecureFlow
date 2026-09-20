@@ -60,11 +60,7 @@ legacy/module.ts
 mock_api_key_456
 `;
       const config = parseSecureFlowIgnore(content);
-      expect(config.ignoredPaths).toEqual([
-        "__mocks__/",
-        "fixtures/*.json",
-        "legacy/module.ts",
-      ]);
+      expect(config.ignoredPaths).toEqual(["__mocks__/", "fixtures/*.json", "legacy/module.ts"]);
       expect(config.placeholders).toEqual([
         "dummy-secret-value",
         "test_token_123",
@@ -91,7 +87,12 @@ mock_api_key_456
       expect(shouldIgnorePath("src/auth.test.ts", patterns)).toBe(true);
       expect(shouldIgnorePath("src/nested/user.spec.js", patterns)).toBe(true);
       expect(shouldIgnorePath("src/auth.ts", patterns)).toBe(false);
-      expect(shouldIgnorePath("src/test.ts", patterns)).toBe(true);
+      // `*.test.ts` is "anything, then `.test.ts`". A file actually named
+      // test.ts has no `.test` segment before its extension, so it is not a
+      // test file by this pattern and must not be ignored.
+      expect(shouldIgnorePath("src/test.ts", patterns)).toBe(false);
+      // The empty match is still a match, as gitignore treats it.
+      expect(shouldIgnorePath("src/.test.ts", patterns)).toBe(true);
     });
 
     it("matches multi-segment wildcard glob patterns tests/** and fixtures/*", () => {
@@ -126,11 +127,7 @@ mock_api_key_456
   });
 
   describe("Integration with scanFile and shouldScanFile", () => {
-    const ignorePatterns = compileIgnorePatterns([
-      "__mocks__/",
-      "*.test.ts",
-      "legacy/**",
-    ]);
+    const ignorePatterns = compileIgnorePatterns(["__mocks__/", "*.test.ts", "legacy/**"]);
 
     it("shouldScanFile returns false for ignored paths", () => {
       expect(shouldScanFile("src/__mocks__/api.ts", undefined, ignorePatterns)).toBe(false);

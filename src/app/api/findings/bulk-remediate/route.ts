@@ -92,10 +92,10 @@ const handler = async function POST(req: NextRequest) {
         data: { status: newStatus },
       });
 
-      return NextResponse.json({ 
-        success: true, 
-        updatedCount: uniqueIds.length, 
-        status: newStatus 
+      return NextResponse.json({
+        success: true,
+        updatedCount: uniqueIds.length,
+        status: newStatus,
       });
     }
 

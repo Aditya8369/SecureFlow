@@ -7,6 +7,8 @@ import {
   parseFailOnArg,
   shouldFailScan,
   loadSecureFlowIgnore,
+  blockingAiFindings,
+  describeFailThreshold,
   type FileScanResult,
   type OutputFormat,
 } from "./scanner.js";
@@ -211,10 +213,6 @@ async function main(): Promise<number> {
       reportAiFinding(finding);
     }
   }
-  const aiViolationCount = aiFindings.filter(
-    (f) => f.severity === "HIGH" || f.severity === "CRITICAL",
-  ).length;
-
   if (
     format === "sarif" ||
     format === "json" ||
@@ -257,28 +255,38 @@ ${textOutput}`);
 
   const failOnThreshold = parseFailOnArg();
   const shouldFail = shouldFailScan(violationCount, aiFindings, failOnThreshold);
+  // Which AI findings actually cleared the active bar — not just the
+  // HIGH/CRITICAL ones the old count was limited to. Under
+  // `--fail-on=LOW` a single LOW finding blocks the commit, and the message has
+  // to name it rather than reporting "0 violations".
+  const blockingAi = blockingAiFindings(aiFindings, failOnThreshold);
 
   if (shouldFail) {
     if (format === "text") {
+      const parts: string[] = [];
+      if (violationCount > 0) {
+        parts.push(`${violationCount} secret-logging violation${violationCount === 1 ? "" : "s"}`);
+      }
+      if (blockingAi.length > 0) {
+        parts.push(`${blockingAi.length} AI-detected finding${blockingAi.length === 1 ? "" : "s"}`);
+      }
+      const subject = parts.length > 0 ? parts.join(" and ") : "findings";
       console.error(
-        `\n❌ SecureFlow blocked this commit: ${violationCount} secret-logging violation${
-          violationCount === 1 ? "" : "s"
-        }${
-          aiViolationCount > 0
-            ? ` and ${aiViolationCount} AI-detected finding${aiViolationCount === 1 ? "" : "s"}`
-            : ""
-        }${
-          failOnThreshold ? ` (cleared --fail-on=${failOnThreshold})` : ""
-        }. Remove the exposed secrets/env variables, then re-stage.`,
+        `\n❌ SecureFlow blocked this commit: ${subject} at or above ${describeFailThreshold(
+          failOnThreshold,
+        )}. Remove the exposed secrets/env variables, then re-stage.`,
       );
     }
     return 1;
   }
 
   if (format === "text") {
-    if (violationCount > 0 || aiFindings.length > 0) {
+    const advisoryCount = violationCount + aiFindings.length;
+    if (advisoryCount > 0) {
       console.log(
-        `⚠️  SecureFlow advisory warning: findings detected below --fail-on=${failOnThreshold} threshold. Scan passing.`,
+        `⚠️  SecureFlow advisory warning: ${advisoryCount} finding${
+          advisoryCount === 1 ? "" : "s"
+        } below ${describeFailThreshold(failOnThreshold)}. Scan passing.`,
       );
     } else {
       console.log(`✅ SecureFlow scan passed (${staged.length} staged file(s)).`);

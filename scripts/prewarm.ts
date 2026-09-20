@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import dotenv from "dotenv";
 
-dotenv.config({ path: ".env.local" });
+dotenv.config({ path: ".env" });
 
 async function prewarm() {
   console.log("🔥 Pre-warming GitHub webhook route...");

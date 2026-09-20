@@ -87,7 +87,13 @@ mock_api_key_456
       expect(shouldIgnorePath("src/auth.test.ts", patterns)).toBe(true);
       expect(shouldIgnorePath("src/nested/user.spec.js", patterns)).toBe(true);
       expect(shouldIgnorePath("src/auth.ts", patterns)).toBe(false);
-      expect(shouldIgnorePath("src/test.ts", patterns)).toBe(false); // FIXED: test.ts does not match *.test.ts
+      
+      // `*.test.ts` is "anything, then `.test.ts`". A file actually named
+      // test.ts has no `.test` segment before its extension, so it is not a
+      // test file by this pattern and must not be ignored.
+      expect(shouldIgnorePath("src/test.ts", patterns)).toBe(false);
+      // The empty match is still a match, as gitignore treats it.
+      expect(shouldIgnorePath("src/.test.ts", patterns)).toBe(true);
     });
 
     it("matches multi-segment wildcard glob patterns tests/** and fixtures/*", () => {

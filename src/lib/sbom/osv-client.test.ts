@@ -257,6 +257,29 @@ describe("osv-client", () => {
     it("returns empty array for no vulns", () => {
       expect(mapOsvVulns(dep, [])).toEqual([]);
     });
+
+    it("falls back to details truncated to 200 chars for description when summary is missing", () => {
+      const vulns: OsvVulnerability[] = [
+        {
+          id: "GHSA-fallback-1",
+          details: "A".repeat(300),
+        },
+      ];
+
+      const matches = mapOsvVulns(dep, vulns);
+      expect(matches[0].description).toBe("A".repeat(200));
+    });
+
+    it("falls back to generic string when both summary and details are missing", () => {
+      const vulns: OsvVulnerability[] = [
+        {
+          id: "GHSA-fallback-2",
+        },
+      ];
+
+      const matches = mapOsvVulns(dep, vulns);
+      expect(matches[0].description).toBe(`Known vulnerability in ${dep.name}`);
+    });
   });
 
   describe("queryOsvForDependency", () => {
@@ -323,13 +346,27 @@ describe("osv-client", () => {
       expect(result).toEqual([]);
     });
 
+    it("returns empty array when version is missing", async () => {
+      // Simulate runtime scenario where version is absent despite the type contract
+      const dep = {
+        name: "flask",
+        manifestFile: "requirements.txt",
+        ecosystem: "pypi",
+      } as unknown as Dependency;
+
+      const result = await queryOsvForDependency(dep);
+
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+      expect(result).toEqual([]);
+    });
+
     it("returns empty array for unsupported ecosystem", async () => {
-      const dep: Dependency = {
+      const dep = {
         name: "serde",
         version: "1.0.0",
         manifestFile: "Cargo.toml",
-        ecosystem: "cargo" as any,
-      };
+        ecosystem: "cargo",
+      } as unknown as Dependency;
 
       const result = await queryOsvForDependency(dep);
 

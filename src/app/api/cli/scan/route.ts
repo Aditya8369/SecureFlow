@@ -73,7 +73,6 @@ function toSyntheticAddedPatch(content: string): string {
   return `${header}\n${body}\n`;
 }
 
-
 const handler = withErrorHandler(async function POST(req: NextRequest) {
   let body: unknown;
   try {

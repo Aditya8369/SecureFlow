@@ -1,4 +1,3 @@
-
 /**
  * Wraps an async operation with a timeout to prevent hanging on stalled local models (#988).
  */

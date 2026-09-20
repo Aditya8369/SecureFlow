@@ -7,6 +7,11 @@ vi.mock("genkitx-groq", () => ({
   groq: vi.fn(() => ({})),
   gptOssx20b: { name: "groq/openai/gpt-oss-20b" },
 }));
+vi.mock("@/lib/prisma", () => ({
+  default: {
+    user: { findUnique: vi.fn() },
+  },
+}));
 
 async function loadGenkit() {
   return import("./genkit");

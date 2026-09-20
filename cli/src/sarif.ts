@@ -170,12 +170,13 @@ export function validateSarifDocument(doc: unknown): { valid: boolean; errors: s
                 if (rule.name !== undefined && typeof rule.name !== "string") {
                   errors.push(`${rulePath}.name must be a string`);
                 }
-                if (
-                  !rule.shortDescription ||
-                  typeof rule.shortDescription !== "object" ||
-                  typeof (rule.shortDescription as Record<string, unknown>).text !== "string" ||
-                  !(rule.shortDescription as Record<string, unknown>).text.trim()
-                ) {
+                
+                // Read the property once: casting twice makes the second read a
+                // fresh expression, so the typeof narrowing does not reach .trim().
+                const shortDescriptionText = (
+                  rule.shortDescription as Record<string, unknown> | undefined
+                )?.text;
+                if (typeof shortDescriptionText !== "string" || !shortDescriptionText.trim()) {
                   errors.push(`${rulePath}.shortDescription.text must be a non-empty string`);
                 }
                 if (rule.defaultConfiguration !== undefined) {
@@ -229,12 +230,9 @@ export function validateSarifDocument(doc: unknown): { valid: boolean; errors: s
               `${resPath}.level must be one of 'error' | 'warning' | 'note' | 'none'`,
             );
           }
-          if (
-            !res.message ||
-            typeof res.message !== "object" ||
-            typeof (res.message as Record<string, unknown>).text !== "string" ||
-            !(res.message as Record<string, unknown>).text.trim()
-          ) {
+          
+          const messageText = (res.message as Record<string, unknown> | undefined)?.text;
+          if (typeof messageText !== "string" || !messageText.trim()) {
             errors.push(`${resPath}.message.text must be a non-empty string`);
           }
 
@@ -250,13 +248,15 @@ export function validateSarifDocument(doc: unknown): { valid: boolean; errors: s
                 errors.push(
                   `${resPath}.ruleIndex (${res.ruleIndex}) is out of bounds for rules array of length ${driverRules.length}`,
                 );
-              } else if (
-                driverRules[res.ruleIndex] &&
-                driverRules[res.ruleIndex].id !== res.ruleId
-              ) {
-                errors.push(
-                  `${resPath}.ruleIndex (${res.ruleIndex}) points to rule id '${driverRules[res.ruleIndex].id}' which does not match result ruleId '${res.ruleId}'`,
-                );
+              } else {
+                // Bound once: under noUncheckedIndexedAccess every re-index is a
+                // separate possibly-undefined read.
+                const referencedRule = driverRules[res.ruleIndex];
+                if (referencedRule && referencedRule.id !== res.ruleId) {
+                  errors.push(
+                    `${resPath}.ruleIndex (${res.ruleIndex}) points to rule id '${String(referencedRule.id)}' which does not match result ruleId '${res.ruleId}'`,
+                  );
+                }
               }
             }
           }
@@ -281,20 +281,13 @@ export function validateSarifDocument(doc: unknown): { valid: boolean; errors: s
                   return;
                 }
                 const phys = loc.physicalLocation as Record<string, unknown>;
-                if (
-                  !phys.artifactLocation ||
-                  typeof phys.artifactLocation !== "object" ||
-                  typeof (phys.artifactLocation as Record<string, unknown>).uri !== "string" ||
-                  !(phys.artifactLocation as Record<string, unknown>).uri.trim()
-                ) {
+                const artifactUri = (phys.artifactLocation as Record<string, unknown> | undefined)?.uri;
+                
+                if (typeof artifactUri !== "string" || !artifactUri.trim()) {
                   errors.push(
                     `${locPath}.physicalLocation.artifactLocation.uri must be a non-empty string`,
                   );
-                } else if (
-                  ((phys.artifactLocation as Record<string, unknown>).uri as string).includes(
-                    "\\",
-                  )
-                ) {
+                } else if (artifactUri.includes("\\")) {
                   errors.push(
                     `${locPath}.physicalLocation.artifactLocation.uri must use forward slashes (no Windows backslashes)`,
                   );

@@ -341,11 +341,7 @@ export interface FileScanResult {
 }
 
 /** Scan one staged blob. */
-export function scanFile(
-  path: string,
-  content: string,
-  customIgnores?: RegExp[],
-): FileScanResult {
+export function scanFile(path: string, content: string, customIgnores?: RegExp[]): FileScanResult {
   if (customIgnores && shouldIgnorePath(path, customIgnores)) {
     return { path, violations: [], skipped: "matched .secureflowignore" };
   }
@@ -442,15 +438,56 @@ export function parseFailOnArg(args: string[] = process.argv): FailOnSeverity | 
 }
 
 /**
+ * The AI findings that clear `failOnThreshold` — the ones actually responsible
+ * for a non-zero exit.
+ *
+ * With no threshold set this is the default HIGH/CRITICAL set, matching
+ * {@link shouldFailScan}. `NONE` is advisory mode, so nothing blocks.
+ */
+export function blockingAiFindings<T extends { severity: string }>(
+  aiFindings: T[],
+  failOnThreshold: FailOnSeverity | null = null,
+): T[] {
+  if (failOnThreshold === "NONE") return [];
+
+  if (failOnThreshold === null) {
+    return aiFindings.filter((f) => f.severity === "HIGH" || f.severity === "CRITICAL");
+  }
+
+  const thresholdRank = SEVERITY_RANK[failOnThreshold];
+  return aiFindings.filter((f) => {
+    const findingSev = (f.severity?.toUpperCase() as FailOnSeverity) || "LOW";
+    return (SEVERITY_RANK[findingSev] ?? 1) >= thresholdRank;
+  });
+}
+
+/**
+ * How to refer to the active threshold in a message, so the default case does
+ * not name a flag the user never passed.
+ */
+export function describeFailThreshold(failOnThreshold: FailOnSeverity | null): string {
+  return failOnThreshold === null
+    ? "the default HIGH/CRITICAL threshold"
+    : `the --fail-on=${failOnThreshold} threshold`;
+}
+
+/**
  * Determines whether a scan should return non-zero exit code based on the failOnThreshold.
  *
  * Local secret logging violations are treated as HIGH severity (rank 3).
+ *
+ * `NONE` is advisory mode: findings are still reported, but nothing blocks the
+ * commit. It is deliberately handled before the rank comparison, because its
+ * rank of 0 is below every real severity and would otherwise make *every*
+ * finding clear the bar.
  */
 export function shouldFailScan(
   localViolationCount: number,
   aiFindings: { severity: string }[],
   failOnThreshold: FailOnSeverity | null = null,
 ): boolean {
+  if (failOnThreshold === "NONE") return false;
+
   if (failOnThreshold === null) {
     const aiHighOrCritical = aiFindings.filter(
       (f) => f.severity === "HIGH" || f.severity === "CRITICAL",

@@ -87,6 +87,7 @@ mock_api_key_456
       expect(shouldIgnorePath("src/auth.test.ts", patterns)).toBe(true);
       expect(shouldIgnorePath("src/nested/user.spec.js", patterns)).toBe(true);
       expect(shouldIgnorePath("src/auth.ts", patterns)).toBe(false);
+      
       // `*.test.ts` is "anything, then `.test.ts`". A file actually named
       // test.ts has no `.test` segment before its extension, so it is not a
       // test file by this pattern and must not be ignored.

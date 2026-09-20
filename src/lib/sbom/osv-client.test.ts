@@ -257,6 +257,29 @@ describe("osv-client", () => {
     it("returns empty array for no vulns", () => {
       expect(mapOsvVulns(dep, [])).toEqual([]);
     });
+
+    it("falls back to details truncated to 200 chars for description when summary is missing", () => {
+      const vulns: OsvVulnerability[] = [
+        {
+          id: "GHSA-fallback-1",
+          details: "A".repeat(300),
+        },
+      ];
+
+      const matches = mapOsvVulns(dep, vulns);
+      expect(matches[0].description).toBe("A".repeat(200));
+    });
+
+    it("falls back to generic string when both summary and details are missing", () => {
+      const vulns: OsvVulnerability[] = [
+        {
+          id: "GHSA-fallback-2",
+        },
+      ];
+
+      const matches = mapOsvVulns(dep, vulns);
+      expect(matches[0].description).toBe(`Known vulnerability in ${dep.name}`);
+    });
   });
 
   describe("queryOsvForDependency", () => {
@@ -316,6 +339,19 @@ describe("osv-client", () => {
         manifestFile: "requirements.txt",
         ecosystem: "pypi",
       };
+
+      const result = await queryOsvForDependency(dep);
+
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+      expect(result).toEqual([]);
+    });
+
+    it("returns empty array when version is missing", async () => {
+      const dep: Dependency = {
+        name: "flask",
+        manifestFile: "requirements.txt",
+        ecosystem: "pypi",
+      } as Dependency; // Casting as it may complain about missing version depending on exact type
 
       const result = await queryOsvForDependency(dep);
 

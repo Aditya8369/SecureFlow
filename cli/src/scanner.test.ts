@@ -314,6 +314,22 @@ describe("shouldFailScan", () => {
     expect(shouldFailScan(1, [], "CRITICAL")).toBe(false);
   });
 
+  it("never fails the scan when the threshold is NONE", () => {
+    // NONE is in the accepted set for --fail-on, so it has to mean "report but
+    // do not block" — advisory mode. Ranking it at 0 made every finding clear
+    // the bar instead, which is the exact inverse.
+    expect(shouldFailScan(0, [{ severity: "CRITICAL" }], "NONE")).toBe(false);
+    expect(shouldFailScan(0, [{ severity: "LOW" }], "NONE")).toBe(false);
+    expect(shouldFailScan(5, [], "NONE")).toBe(false);
+    expect(shouldFailScan(5, [{ severity: "CRITICAL" }], "NONE")).toBe(false);
+  });
+
+  it("does not fail a clean scan at any threshold", () => {
+    for (const threshold of ["CRITICAL", "HIGH", "MEDIUM", "LOW", "NONE"] as const) {
+      expect(shouldFailScan(0, [], threshold)).toBe(false);
+    }
+  });
+
   it("fails when AI findings meet or exceed threshold", () => {
     expect(shouldFailScan(0, [{ severity: "CRITICAL" }], "CRITICAL")).toBe(true);
     expect(shouldFailScan(0, [{ severity: "HIGH" }], "CRITICAL")).toBe(false);

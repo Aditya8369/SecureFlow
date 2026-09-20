@@ -6,6 +6,7 @@ import {
   formatScanResults,
   parseFailOnArg,
   shouldFailScan,
+  loadSecureFlowIgnore,
   type FileScanResult,
   type OutputFormat,
 } from "./scanner.js";
@@ -83,6 +84,22 @@ function parseOutputArg(): string | null {
   return null;
 }
 
+function parseIgnoreFileArg(): string | undefined {
+  const idx = process.argv.findIndex((arg) => arg === "--ignore-file" || arg === "--ignore");
+  if (idx !== -1) {
+    const val = process.argv[idx + 1];
+    if (val && !val.startsWith("-")) {
+      return val;
+    }
+  }
+  for (const arg of process.argv) {
+    if (arg.startsWith("--ignore-file=")) {
+      return arg.split("=")[1];
+    }
+  }
+  return undefined;
+}
+
 function reportSkipped(result: FileScanResult): void {
   if (VERBOSE && result.skipped) {
     console.log(`  ↷ skipped ${result.path} (${result.skipped})`);
@@ -151,6 +168,16 @@ async function main(): Promise<number> {
   const stagedForAi: StagedFileForAiScan[] = [];
   let violationCount = 0;
 
+  const customIgnorePath = parseIgnoreFileArg();
+  const ignoreData = loadSecureFlowIgnore(customIgnorePath);
+  const customIgnores = ignoreData?.compiledPatterns ?? [];
+
+  if (VERBOSE && ignoreData) {
+    console.log(
+      `ℹ️  [SecureFlow] Loaded ${ignoreData.config.ignoredPaths.length} ignore pattern(s) from ignore configuration`,
+    );
+  }
+
   if (staged.length > 0) {
     for (const path of staged) {
       const content = readStagedContent(path);
@@ -160,15 +187,17 @@ async function main(): Promise<number> {
         continue;
       }
 
-      stagedForAi.push({ path, content });
-
-      const result = scanFile(path, content);
+      const result = scanFile(path, content, customIgnores);
       fileResults.push(result);
       if (format === "text") {
         reportSkipped(result);
         reportViolations(result);
       }
       violationCount += result.violations.length;
+
+      if (!result.skipped) {
+        stagedForAi.push({ path, content });
+      }
     }
   }
 

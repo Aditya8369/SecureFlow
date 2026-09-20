@@ -61,6 +61,12 @@ model User {
   roles         UserRole[]
   auditLogs     AuditLog[]
 
+  /**
+   * Incoming Slack webhook URL for real-time alerts on CRITICAL/HIGH findings.
+   * Optional — null disables Slack notifications for this user (#936).
+   */
+  slackWebhookUrl String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -174,6 +180,8 @@ model PullRequest {
 
   @@index([repositoryId])
   @@index([authorLogin])
+  @@index([repositoryId, status])
+  @@index([repositoryId, createdAt(sort: Desc)])
 }
 
 model ScanResult {
@@ -187,6 +195,7 @@ model ScanResult {
 
   @@index([pullRequestId])
   @@index([pullRequestId, createdAt(sort: Desc)])
+  @@index([pullRequestId, policyDecision])
 }
 
 model Finding {
@@ -212,6 +221,7 @@ model Finding {
   // walks one severity at a time within a scan's findings, so the list and its
   // per-bucket counts filter on (scanResultId, severity) together.
   @@index([scanResultId, severity])
+  @@index([scanResultId, type])
 }
 
 model RemediationPatch {

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createHmac } from "crypto";
+import { Octokit } from "octokit";
 
 // ---- Mocks (factories must not reference outer variables — they are hoisted) ----
 
@@ -9,12 +10,14 @@ const {
   mockPrismaPR,
   mockOctokitListFiles,
   mockOctokitGetContent,
+  mockGetInstallationOctokit,
 } = vi.hoisted(() => ({
   mockEnqueueSbomScan: vi.fn(),
   mockPrismaRepo: { findUnique: vi.fn() },
   mockPrismaPR: { upsert: vi.fn() },
   mockOctokitListFiles: vi.fn(),
   mockOctokitGetContent: vi.fn(),
+  mockGetInstallationOctokit: vi.fn(),
 }));
 
 vi.mock("@/lib/queue/sbomQueue", () => ({
@@ -53,6 +56,11 @@ vi.mock("octokit", () => {
           getContent: mockOctokitGetContent,
         },
       };
+    },
+    // handlePullRequestSynchronize authenticates as the App installation that
+    // sent the delivery, so the client it uses comes from here.
+    App: class MockApp {
+      getInstallationOctokit = mockGetInstallationOctokit;
     },
   };
 });
@@ -602,6 +610,13 @@ describe("GitHub webhook route", () => {
     };
 
     beforeEach(() => {
+      // The App credentials the installation client is built from.
+      process.env.GITHUB_APP_ID = "12345";
+      process.env.GITHUB_PRIVATE_KEY =
+        "-----BEGIN RSA PRIVATE KEY-----\\nkey\\n-----END RSA PRIVATE KEY-----";
+
+      mockGetInstallationOctokit.mockImplementation(async () => new Octokit());
+
       mockPrismaRepo.findUnique.mockResolvedValue({
         id: "repo-uuid-1",
         userId: "user-real-owner",
@@ -620,6 +635,17 @@ describe("GitHub webhook route", () => {
           ),
         },
       });
+    });
+
+    it("authenticates as the App installation that sent the delivery", async () => {
+      // This used to build `new Octokit({ auth: process.env.GITHUB_TOKEN })`.
+      // GITHUB_TOKEN is in no env schema and is set nowhere, so the client was
+      // anonymous: private repositories 404ed and both fetch helpers swallow
+      // their errors, so no manifest was ever scanned and nothing was logged.
+      await handlePullRequestSynchronize(syncPayload, "delivery-uuid-99");
+
+      expect(mockGetInstallationOctokit).toHaveBeenCalledWith(777);
+      expect(mockEnqueueSbomScan).toHaveBeenCalled();
     });
 
     it("resolves repository and PR ownership correctly, passing real userId, repositoryId, and pullRequestId", async () => {

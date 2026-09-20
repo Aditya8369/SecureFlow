@@ -6,6 +6,7 @@ import {
   formatCsv,
   formatHtml,
   formatMarkdown,
+  toMarkdownCodeSpan,
 } from "./exporters.js";
 import type { FileScanResult } from "./scanner.js";
 
@@ -355,5 +356,76 @@ describe("formatMarkdown", () => {
     ];
     const md = formatMarkdown(pipeResults);
     expect(md).toContain('`console.log("a\\|b");`');
+  });
+});
+
+describe("toMarkdownCodeSpan", () => {
+  it("keeps a backtick inside the span instead of closing it early", () => {
+    // A template literal that logs an interpolated value is exactly the kind
+    // of line this scanner flags, and a single pair of backticks closed on the
+    // first one, spilling the rest of the source line into the table as prose.
+    const source = "console.log(`token: ${t}`)";
+    const span = toMarkdownCodeSpan(source);
+
+    expect(span).toBe("``console.log(`token: ${t}`)``");
+    // The fence must be longer than any run it contains, or it closes early.
+    const fence = span.slice(0, span.length - span.replace(/^`+/, "").length);
+    expect(fence.length).toBeGreaterThan(
+      Math.max(...[...source.matchAll(/`+/g)].map((r) => r[0].length)),
+    );
+  });
+
+  it("lengthens the fence past the longest run, not just past one backtick", () => {
+    const source = "a```b";
+    expect(toMarkdownCodeSpan(source)).toBe("````a```b````");
+  });
+
+  it("pads a value that starts or ends with a backtick", () => {
+    expect(toMarkdownCodeSpan("`x")).toBe("`` `x ``");
+  });
+
+  it("leaves backslashes alone, because a code span is literal", () => {
+    // escapeMarkdownTable doubles them for plain cells, which is right there
+    // and wrong in here: the reader saw two backslashes where the source had
+    // one.
+    expect(toMarkdownCodeSpan("C:\\temp")).toContain("C:\\temp");
+    expect(toMarkdownCodeSpan("C:\\temp")).not.toContain("C:\\\\temp");
+  });
+
+  it("still escapes the pipe, which GFM resolves before code spans", () => {
+    expect(toMarkdownCodeSpan("a | b")).toContain("\\|");
+  });
+
+  it("collapses newlines rather than emitting a <br> that would render literally", () => {
+    const span = toMarkdownCodeSpan("first\nsecond");
+    expect(span).not.toContain("<br>");
+    expect(span).not.toContain("\n");
+    expect(span).toContain("first second");
+  });
+});
+
+describe("formatMarkdown code spans", () => {
+  it("emits a row whose code span is closed by its own fence", () => {
+    const results = [
+      {
+        path: "src/auth.ts",
+        violations: [
+          {
+            line: 3,
+            text: "console.log(`key: ${k}`)",
+            reason: "logs a secret",
+          },
+        ],
+      },
+    ] as never;
+
+    const row = formatMarkdown(results)
+      .split("\n")
+      .find((l) => l.includes("src/auth.ts"));
+
+    expect(row).toBeDefined();
+    // Three runs of backticks in a row means one span opened and closed
+    // around a value that itself contains a pair.
+    expect(row).toContain("``console.log(`key: ${k}`)``");
   });
 });

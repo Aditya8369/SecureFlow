@@ -347,11 +347,12 @@ describe("osv-client", () => {
     });
 
     it("returns empty array when version is missing", async () => {
-      const dep: Dependency = {
+      // Simulate runtime scenario where version is absent despite the type contract
+      const dep = {
         name: "flask",
         manifestFile: "requirements.txt",
         ecosystem: "pypi",
-      } as Dependency; // Casting as it may complain about missing version depending on exact type
+      } as unknown as Dependency;
 
       const result = await queryOsvForDependency(dep);
 
@@ -360,12 +361,12 @@ describe("osv-client", () => {
     });
 
     it("returns empty array for unsupported ecosystem", async () => {
-      const dep: Dependency = {
+      const dep = {
         name: "serde",
         version: "1.0.0",
         manifestFile: "Cargo.toml",
-        ecosystem: "cargo" as any,
-      };
+        ecosystem: "cargo",
+      } as unknown as Dependency;
 
       const result = await queryOsvForDependency(dep);
 

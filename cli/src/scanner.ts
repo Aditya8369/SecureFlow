@@ -9,6 +9,23 @@
 
 import { formatSarifJson } from "./sarif.js";
 import { formatCsv, formatHtml, formatMarkdown } from "./exporters.js";
+import {
+  shouldIgnorePath,
+  parseSecureFlowIgnore,
+  compileIgnorePatterns,
+  loadSecureFlowIgnore,
+  normalizeScanPath,
+  type SecureFlowIgnoreConfig,
+} from "./ignore.js";
+
+export {
+  shouldIgnorePath,
+  parseSecureFlowIgnore,
+  compileIgnorePatterns,
+  loadSecureFlowIgnore,
+  normalizeScanPath,
+  type SecureFlowIgnoreConfig,
+};
 
 /** One flagged call site. */
 export interface Violation {
@@ -115,7 +132,13 @@ const GENERATED_FILES = [
 export const MAX_SCANNED_BYTES = 512 * 1024;
 
 /** Whether `path` should be scanned at all. */
-export function shouldScanFile(path: string, byteLength?: number): boolean {
+export function shouldScanFile(
+  path: string,
+  byteLength?: number,
+  customIgnores?: RegExp[],
+): boolean {
+  if (customIgnores && shouldIgnorePath(path, customIgnores)) return false;
+
   const lower = path.toLowerCase();
   const basename = lower.split("/").pop() ?? lower;
 
@@ -318,7 +341,15 @@ export interface FileScanResult {
 }
 
 /** Scan one staged blob. */
-export function scanFile(path: string, content: string): FileScanResult {
+export function scanFile(
+  path: string,
+  content: string,
+  customIgnores?: RegExp[],
+): FileScanResult {
+  if (customIgnores && shouldIgnorePath(path, customIgnores)) {
+    return { path, violations: [], skipped: "matched .secureflowignore" };
+  }
+
   if (!shouldScanFile(path, Buffer.byteLength(content, "utf-8"))) {
     return { path, violations: [], skipped: "excluded by type or size" };
   }

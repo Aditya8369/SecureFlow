@@ -12,6 +12,13 @@ vi.mock("@/lib/prisma", () => ({
     user: { findUnique: vi.fn() },
   },
 }));
+vi.mock("@/lib/queue/redis", () => ({
+  redis: { get: vi.fn(), set: vi.fn(), on: vi.fn(), status: "ready" },
+}));
+vi.stubGlobal(
+  "fetch",
+  vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve({}) })),
+);
 
 async function loadGenkit() {
   return import("./genkit");

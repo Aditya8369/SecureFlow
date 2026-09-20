@@ -30,6 +30,17 @@ const MAX_SUMMARY_LENGTH = 300;
 /** Cap on how many findings are itemised in the message body. */
 const MAX_LISTED_FINDINGS = 10;
 
+/**
+ * Slack's own limit on a `section` block's `text.text` (Block Kit reference).
+ *
+ * Exceeding it is not a truncation — the API answers 400 `invalid_blocks` and
+ * drops the whole message, so the alert simply never arrives.
+ */
+export const SLACK_SECTION_TEXT_LIMIT = 3000;
+
+/** Separator between two itemised findings inside one section. */
+const FINDING_SEPARATOR = "\n\n";
+
 /** The minimal finding shape the alert needs. */
 export interface AlertFinding {
   type: string;
@@ -91,6 +102,46 @@ function summariseFinding(finding: AlertFinding): string {
 }
 
 /**
+ * Pack `lines` into as few section bodies as possible, none over the limit.
+ *
+ * The findings used to be joined into one string and handed to a single
+ * section. Ten findings at the 300-character summary cap, with a type and a
+ * file path each, comes to roughly 4,000 characters — so the message Slack
+ * rejected was the one reporting the most findings, which is exactly the one
+ * worth delivering.
+ *
+ * A line that is over the limit on its own is clipped rather than dropped: it
+ * cannot be packed with anything else, and losing the finding entirely is
+ * worse than losing its tail.
+ */
+export function packSectionBodies(
+  lines: readonly string[],
+  limit: number = SLACK_SECTION_TEXT_LIMIT,
+): string[] {
+  const bodies: string[] = [];
+  let current = "";
+
+  for (const line of lines) {
+    const clipped = line.length > limit ? `${line.slice(0, Math.max(0, limit - 1))}…` : line;
+
+    if (!current) {
+      current = clipped;
+      continue;
+    }
+
+    if (current.length + FINDING_SEPARATOR.length + clipped.length <= limit) {
+      current += FINDING_SEPARATOR + clipped;
+    } else {
+      bodies.push(current);
+      current = clipped;
+    }
+  }
+
+  if (current) bodies.push(current);
+  return bodies;
+}
+
+/**
  * Build the Slack message for a scan's high-severity findings, or `null` when
  * none clear the threshold (so the caller sends nothing rather than an empty
  * alert).
@@ -110,15 +161,15 @@ export function buildSlackAlert(args: BuildSlackAlertArgs): SlackMessage | null 
   const fallback = `🛡️ SecureFlow: ${heading} in ${args.repositoryFullName}#${args.prNumber}`;
 
   const listed = flagged.slice(0, MAX_LISTED_FINDINGS);
-  const findingLines = listed
-    .map(
-      (f) =>
-        `${severityBadge(f.severity)} *${f.type}* in \`${f.fileLocation}\`\n${summariseFinding(f)}`,
-    )
-    .join("\n\n");
+  const findingLines = listed.map(
+    (f) =>
+      `${severityBadge(f.severity)} *${f.type}* in \`${f.fileLocation}\`\n${summariseFinding(f)}`,
+  );
 
   const overflow = flagged.length - listed.length;
-  const overflowNote = overflow > 0 ? `\n\n_…and ${overflow} more._` : "";
+  if (overflow > 0) {
+    findingLines.push(`_…and ${overflow} more._`);
+  }
 
   const blocks: unknown[] = [
     {
@@ -136,13 +187,12 @@ export function buildSlackAlert(args: BuildSlackAlertArgs): SlackMessage | null 
         text: `*${heading}* detected in <${url}|${args.repositoryFullName}#${args.prNumber}>`,
       },
     },
-    {
+    // One section per chunk: a body over SLACK_SECTION_TEXT_LIMIT makes Slack
+    // reject the entire message, not just that block.
+    ...packSectionBodies(findingLines).map((text) => ({
       type: "section",
-      text: {
-        type: "mrkdwn",
-        text: `${findingLines}${overflowNote}`,
-      },
-    },
+      text: { type: "mrkdwn", text },
+    })),
     {
       type: "actions",
       elements: [

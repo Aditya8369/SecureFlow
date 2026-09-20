@@ -240,7 +240,7 @@ config:
 secrets:
   # If existingSecret is set, the chart uses the specified secret rather than creating one.
   existingSecret: ""
-  
+
   # Plaintext values to populate if existingSecret is empty
   authSecret: "changeme-generate-a-secure-random-auth-secret"
   groqApiKey: ""

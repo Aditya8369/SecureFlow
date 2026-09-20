@@ -93,7 +93,6 @@ describe("POST /api/cli/scan", () => {
     ]);
   });
 
-
   it.each([
     ["a file without content", { files: [{ path: "src/app.ts" }] }],
     ["a null entry", { files: [null] }],

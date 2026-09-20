@@ -560,8 +560,7 @@ describe("CircuitBreaker integration", () => {
 });
 
 // Safe safeguard for Redis timeout unhandled rejection (#981)
-process.on('unhandledRejection', (err) => {
-  if (err instanceof Error && err.message.includes('Redis timeout')) return;
+process.on("unhandledRejection", (err) => {
+  if (err instanceof Error && err.message.includes("Redis timeout")) return;
   throw err;
 });
-

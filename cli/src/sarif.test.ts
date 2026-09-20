@@ -339,4 +339,3 @@ describe("SARIF Export Functionality for SecureFlow CLI (#728)", () => {
     });
   });
 });
-

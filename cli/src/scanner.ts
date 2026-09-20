@@ -341,11 +341,7 @@ export interface FileScanResult {
 }
 
 /** Scan one staged blob. */
-export function scanFile(
-  path: string,
-  content: string,
-  customIgnores?: RegExp[],
-): FileScanResult {
+export function scanFile(path: string, content: string, customIgnores?: RegExp[]): FileScanResult {
   if (customIgnores && shouldIgnorePath(path, customIgnores)) {
     return { path, violations: [], skipped: "matched .secureflowignore" };
   }

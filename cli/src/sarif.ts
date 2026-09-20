@@ -174,15 +174,12 @@ export function validateSarifDocument(doc: unknown): { valid: boolean; errors: s
                   !rule.shortDescription ||
                   typeof rule.shortDescription !== "object" ||
                   typeof (rule.shortDescription as Record<string, unknown>).text !== "string" ||
-                  !(rule.shortDescription as Record<string, unknown>).text.trim()
+                  !((rule.shortDescription as Record<string, unknown>).text as string).trim()
                 ) {
                   errors.push(`${rulePath}.shortDescription.text must be a non-empty string`);
                 }
                 if (rule.defaultConfiguration !== undefined) {
-                  if (
-                    typeof rule.defaultConfiguration !== "object" ||
-                    !rule.defaultConfiguration
-                  ) {
+                  if (typeof rule.defaultConfiguration !== "object" || !rule.defaultConfiguration) {
                     errors.push(`${rulePath}.defaultConfiguration must be an object`);
                   } else {
                     const config = rule.defaultConfiguration as Record<string, unknown>;
@@ -207,8 +204,8 @@ export function validateSarifDocument(doc: unknown): { valid: boolean; errors: s
         errors.push(`${runPath}.results must be an array`);
       } else {
         const driverRules = (run.tool as Record<string, unknown> | undefined)?.driver
-          ? (((run.tool as Record<string, unknown>).driver as Record<string, unknown>)
-              ?.rules as Array<Record<string, unknown>> | undefined)
+          ? (((run.tool as Record<string, unknown>).driver as Record<string, unknown>)?.rules as
+              Array<Record<string, unknown>> | undefined)
           : undefined;
 
         run.results.forEach((resItem: unknown, resIdx: number) => {
@@ -225,15 +222,13 @@ export function validateSarifDocument(doc: unknown): { valid: boolean; errors: s
             res.level !== undefined &&
             !VALID_LEVELS.includes(res.level as (typeof VALID_LEVELS)[number])
           ) {
-            errors.push(
-              `${resPath}.level must be one of 'error' | 'warning' | 'note' | 'none'`,
-            );
+            errors.push(`${resPath}.level must be one of 'error' | 'warning' | 'note' | 'none'`);
           }
           if (
             !res.message ||
             typeof res.message !== "object" ||
             typeof (res.message as Record<string, unknown>).text !== "string" ||
-            !(res.message as Record<string, unknown>).text.trim()
+            !((res.message as Record<string, unknown>).text as string).trim()
           ) {
             errors.push(`${resPath}.message.text must be a non-empty string`);
           }
@@ -250,13 +245,13 @@ export function validateSarifDocument(doc: unknown): { valid: boolean; errors: s
                 errors.push(
                   `${resPath}.ruleIndex (${res.ruleIndex}) is out of bounds for rules array of length ${driverRules.length}`,
                 );
-              } else if (
-                driverRules[res.ruleIndex] &&
-                driverRules[res.ruleIndex].id !== res.ruleId
-              ) {
-                errors.push(
-                  `${resPath}.ruleIndex (${res.ruleIndex}) points to rule id '${driverRules[res.ruleIndex].id}' which does not match result ruleId '${res.ruleId}'`,
-                );
+              } else {
+                const targetRule = driverRules[res.ruleIndex];
+                if (targetRule && targetRule.id !== res.ruleId) {
+                  errors.push(
+                    `${resPath}.ruleIndex (${res.ruleIndex}) points to rule id '${String(targetRule.id)}' which does not match result ruleId '${res.ruleId}'`,
+                  );
+                }
               }
             }
           }
@@ -285,26 +280,20 @@ export function validateSarifDocument(doc: unknown): { valid: boolean; errors: s
                   !phys.artifactLocation ||
                   typeof phys.artifactLocation !== "object" ||
                   typeof (phys.artifactLocation as Record<string, unknown>).uri !== "string" ||
-                  !(phys.artifactLocation as Record<string, unknown>).uri.trim()
+                  !((phys.artifactLocation as Record<string, unknown>).uri as string).trim()
                 ) {
                   errors.push(
                     `${locPath}.physicalLocation.artifactLocation.uri must be a non-empty string`,
                   );
                 } else if (
-                  ((phys.artifactLocation as Record<string, unknown>).uri as string).includes(
-                    "\\",
-                  )
+                  ((phys.artifactLocation as Record<string, unknown>).uri as string).includes("\\")
                 ) {
                   errors.push(
                     `${locPath}.physicalLocation.artifactLocation.uri must use forward slashes (no Windows backslashes)`,
                   );
                 }
 
-                if (
-                  !phys.region ||
-                  typeof phys.region !== "object" ||
-                  Array.isArray(phys.region)
-                ) {
+                if (!phys.region || typeof phys.region !== "object" || Array.isArray(phys.region)) {
                   errors.push(`${locPath}.physicalLocation.region must be an object`);
                 } else {
                   const reg = phys.region as Record<string, unknown>;

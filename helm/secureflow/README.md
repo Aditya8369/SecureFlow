@@ -134,26 +134,26 @@ helm upgrade --install secureflow ./helm/secureflow -f production-values.yaml
 
 ## Configuration Reference
 
-| Parameter | Description | Default |
-|---|---|---|
-| `app.replicaCount` | Number of Next.js app replicas | `2` |
-| `app.image.repository` | Next.js container image repository | `secureflow/app` |
-| `app.service.port` | Application service port | `9002` |
-| `app.autoscaling.enabled` | Enable HorizontalPodAutoscaler for app | `false` |
-| `worker.enabled` | Enable background queue workers | `true` |
-| `worker.replicaCount` | Number of worker replicas | `2` |
-| `worker.concurrency` | Scan concurrency per worker | `5` |
-| `worker.autoscaling.enabled` | Enable HorizontalPodAutoscaler for workers | `false` |
-| `migration.enabled` | Enable automated database schema migration hook | `true` |
-| `retention.enabled` | Enable scheduled data retention cleanup CronJob | `true` |
-| `retention.schedule` | Cron schedule for data retention | `0 2 * * *` |
-| `ingress.enabled` | Enable Ingress resource | `false` |
-| `ingress.className` | Ingress controller class name | `nginx` |
-| `secrets.existingSecret` | Name of pre-created secret for credentials | `""` |
-| `postgresql.enabled` | Deploy in-cluster PostgreSQL StatefulSet | `true` |
-| `postgresql.external.host` | Hostname of external PostgreSQL instance | `""` |
-| `redis.enabled` | Deploy in-cluster Redis StatefulSet | `true` |
-| `redis.external.url` | Connection URI for external Redis instance | `""` |
+| Parameter                    | Description                                     | Default          |
+| ---------------------------- | ----------------------------------------------- | ---------------- |
+| `app.replicaCount`           | Number of Next.js app replicas                  | `2`              |
+| `app.image.repository`       | Next.js container image repository              | `secureflow/app` |
+| `app.service.port`           | Application service port                        | `9002`           |
+| `app.autoscaling.enabled`    | Enable HorizontalPodAutoscaler for app          | `false`          |
+| `worker.enabled`             | Enable background queue workers                 | `true`           |
+| `worker.replicaCount`        | Number of worker replicas                       | `2`              |
+| `worker.concurrency`         | Scan concurrency per worker                     | `5`              |
+| `worker.autoscaling.enabled` | Enable HorizontalPodAutoscaler for workers      | `false`          |
+| `migration.enabled`          | Enable automated database schema migration hook | `true`           |
+| `retention.enabled`          | Enable scheduled data retention cleanup CronJob | `true`           |
+| `retention.schedule`         | Cron schedule for data retention                | `0 2 * * *`      |
+| `ingress.enabled`            | Enable Ingress resource                         | `false`          |
+| `ingress.className`          | Ingress controller class name                   | `nginx`          |
+| `secrets.existingSecret`     | Name of pre-created secret for credentials      | `""`             |
+| `postgresql.enabled`         | Deploy in-cluster PostgreSQL StatefulSet        | `true`           |
+| `postgresql.external.host`   | Hostname of external PostgreSQL instance        | `""`             |
+| `redis.enabled`              | Deploy in-cluster Redis StatefulSet             | `true`           |
+| `redis.external.url`         | Connection URI for external Redis instance      | `""`             |
 
 ---
 

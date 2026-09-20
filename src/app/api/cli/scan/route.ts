@@ -60,14 +60,19 @@ const cliScanRequestSchema = z.object({
  * from-scratch PR that adds the file.
  */
 function toSyntheticAddedPatch(content: string): string {
-  if (typeof content !== "string") {
+  if (typeof content !== "string" || content.length === 0) {
     return "";
   }
-  const lines = content.split("\n");
+  const normalized = content.endsWith("\n") ? content.slice(0, -1) : content;
+  if (normalized.length === 0) {
+    return "";
+  }
+  const lines = normalized.split("\n");
   const header = `@@ -0,0 +1,${lines.length} @@`;
   const body = lines.map((line) => `+${line}`).join("\n");
   return `${header}\n${body}\n`;
 }
+
 
 const handler = withErrorHandler(async function POST(req: NextRequest) {
   let body: unknown;

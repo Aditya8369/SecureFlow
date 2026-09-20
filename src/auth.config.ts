@@ -92,12 +92,12 @@ export default {
           throw new Error("Invalid token response: missing access_token or expires_in");
         }
 
+        const { error: _error, ...restToken } = token;
         return {
-          ...token,
+          ...restToken,
           accessToken: refreshedTokens.access_token,
           accessTokenExpires: Date.now() + Number(refreshedTokens.expires_in) * 1000,
           refreshToken: refreshedTokens.refresh_token ?? token.refreshToken,
-          error: undefined,
         };
       } catch (error) {
         console.error("Token refresh failed:", error);

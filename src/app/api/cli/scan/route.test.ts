@@ -77,6 +77,23 @@ describe("POST /api/cli/scan", () => {
     ]);
   });
 
+  it("normalizes trailing newlines and handles empty content in synthetic patches", async () => {
+    const res = await post({
+      files: [
+        { path: "src/with-newline.ts", content: "a\nb\n" },
+        { path: "src/empty.ts", content: "" },
+      ],
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ findings: [] });
+    expect(scanPullRequestMock).toHaveBeenCalledWith([
+      { filename: "src/with-newline.ts", patch: "@@ -0,0 +1,2 @@\n+a\n+b\n" },
+      { filename: "src/empty.ts", patch: "" },
+    ]);
+  });
+
+
   it.each([
     ["a file without content", { files: [{ path: "src/app.ts" }] }],
     ["a null entry", { files: [null] }],

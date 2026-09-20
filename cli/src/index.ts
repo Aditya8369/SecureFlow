@@ -225,11 +225,11 @@ async function main(): Promise<number> {
     const outputString = formatScanResults(fileResults, format);
     if (outputPath) {
       if (DRY_RUN) {
-      console.log(`[DRY RUN] Would write to ${outputPath}:
+        console.log(`[DRY RUN] Would write to ${outputPath}:
 ${outputString}`);
-    } else {
-      fs.writeFileSync(outputPath, outputString, "utf-8");
-    }
+      } else {
+        fs.writeFileSync(outputPath, outputString, "utf-8");
+      }
       console.log(
         `📄 [SecureFlow] Scan report exported in ${format.toUpperCase()} format to ${outputPath}`,
       );

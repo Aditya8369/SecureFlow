@@ -279,14 +279,33 @@ const handler = withErrorHandler(async function POST(req: NextRequest) {
   //
   // All Zod validation, Prisma idempotency checks and DB relations live in the
   // worker that processes this job.
-  await addWebhookJob(
-    {
-      payload: parsed.payload,
-      deliveryId,
-      event,
-    },
-    { jobId: webhookJobId(deliveryId) },
-  );
+  try {
+    await addWebhookJob(
+      {
+        payload: parsed.payload,
+        deliveryId,
+        event,
+      },
+      { jobId: webhookJobId(deliveryId) },
+    );
+  } catch (error: any) {
+    console.error(`[DLQ_FALLBACK] BullMQ enqueue failed for delivery ${deliveryId}. Routing to Dead Letter Queue...`, error);
+    try {
+      // Dead-Letter Queue (DLQ) Fallback: Store failed webhook deliveries in the database
+      // to ensure no repository scans or push events are skipped during Redis downtime.
+      await prisma.webhookDlq.create({
+        data: {
+          deliveryId,
+          event: event || "unknown",
+          payload: parsed.payload as any,
+          errorMessage: error?.message || "BullMQ enqueue failure"
+        }
+      });
+      console.log(`[DLQ_FALLBACK] Successfully routed delivery ${deliveryId} to Database DLQ.`);
+    } catch (dbError) {
+      console.error(`[DLQ_FALLBACK] CRITICAL: Failed to save to Database DLQ for delivery ${deliveryId}`, dbError);
+    }
+  }
 
   return NextResponse.json({ status: "queued", deliveryId }, { status: 202 });
 });

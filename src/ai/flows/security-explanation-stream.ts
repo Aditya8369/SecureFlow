@@ -7,6 +7,7 @@ import {
   ai,
   getSecurityExplanationModelChain,
 } from "@/ai/genkit";
+import { InsufficientVRAMError, isInsufficientMemoryError } from "@/ai/local-model";
 
 import {
   AISecurityExplanationApiSchema,
@@ -234,6 +235,17 @@ export async function* streamDeveloperSecurityExplanations(
         );
         break;
       } catch (modelErr) {
+        if (isInsufficientMemoryError(modelErr)) {
+          // Not retryable: the same model fails the same way. Try the next
+          // (smaller) local model, or surface one actionable message.
+          if (i < modelChain.length - 1) {
+            console.warn(
+              `[AI_FALLBACK] Model ${String(activeModel)} does not fit in GPU memory. Switching to smaller model: ${String(modelChain[i + 1])}`,
+            );
+            continue;
+          }
+          throw new InsufficientVRAMError(modelChain.map((m) => getModelId(m)));
+        }
         if (i < modelChain.length - 1 && (isRateLimitError(modelErr) || isTimeoutError(modelErr))) {
           console.warn(
             `[AI_FALLBACK] Model ${String(activeModel)} failed (${String(modelErr)}). Switching to fallback model: ${String(modelChain[i + 1])}`,

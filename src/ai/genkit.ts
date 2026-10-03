@@ -3,6 +3,7 @@ import { genkit } from "genkit";
 import { groq, gptOssx20b } from "genkitx-groq";
 import {
   resolveLocalModelConfig,
+  resolveLocalFallbackModels,
   isLocalModelEnabled,
   createLocalAiInstance,
   localModelRef,
@@ -145,13 +146,18 @@ export const securityExplanationFallbackModels = [
 /**
  * Get ordered list of models for resilient failover execution.
  *
- * In local mode the chain collapses to a single entry — there is no cloud
- * fallback when the operator has explicitly opted out of cloud providers.
+ * In local mode there is no cloud fallback when the operator has explicitly
+ * opted out of cloud providers. The chain is the active local model followed
+ * by any smaller local models in `LOCAL_AI_FALLBACK_MODELS`, tried when the
+ * active one does not fit in GPU memory (#1140).
  */
 export function getSecurityExplanationModelChain(): Array<typeof gptOssx20b | string> {
   const localConfig = resolveLocalModelConfig();
   if (localConfig) {
-    return [localModelRef(localConfig)];
+    return [
+      localModelRef(localConfig),
+      ...resolveLocalFallbackModels().map((model) => localModelRef({ ...localConfig, model })),
+    ];
   }
 
   const customFallback = configuredGroqModel();

@@ -277,3 +277,89 @@ export function createLocalAiInstance(config: LocalModelConfig) {
 export function localModelRef(config: LocalModelConfig): string {
   return `openai/${config.model}`;
 }
+
+// ---------------------------------------------------------------------------
+// Insufficient GPU memory handling (#1140)
+// ---------------------------------------------------------------------------
+
+/**
+ * Comma-separated smaller model tags to try, in order, when the active local
+ * model cannot be loaded because the GPU/system lacks the memory for it
+ * (e.g. `LOCAL_AI_FALLBACK_MODELS=llama3.2:3b,llama3.2:1b`).
+ *
+ * Local mode never falls back to a cloud provider, so these are always models
+ * served by the same local endpoint. Blank entries and the active model itself
+ * are dropped. Returns `[]` when local mode is off or nothing is configured.
+ */
+export function resolveLocalFallbackModels(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string[] {
+  const config = resolveLocalModelConfig(env);
+  if (!config) return [];
+
+  const seen = new Set<string>([config.model]);
+  const fallbacks: string[] = [];
+  for (const raw of (env.LOCAL_AI_FALLBACK_MODELS ?? "").split(",")) {
+    const model = raw.trim();
+    if (model && !seen.has(model)) {
+      seen.add(model);
+      fallbacks.push(model);
+    }
+  }
+  return fallbacks;
+}
+
+/**
+ * Phrases local inference servers use when a model does not fit in memory.
+ * Deliberately specific: a bare "memory" or "CUDA" also shows up in unrelated errors.
+ *
+ *   - Ollama:  "model requires more system memory (X GiB) than is available (Y GiB)"
+ *   - llama.cpp / CUDA: "CUDA error: out of memory", "failed to allocate ... buffer"
+ *   - vLLM:    "CUDA out of memory", "No available memory for the cache blocks"
+ */
+const INSUFFICIENT_MEMORY_PATTERNS: readonly RegExp[] = [
+  /requires more (?:system )?memory/i,
+  /out of memory/i,
+  /\bOOM\b/,
+  /insufficient (?:v?ram|(?:gpu |system )?memory)/i,
+  /not enough (?:v?ram|(?:gpu |system )?memory)/i,
+  /(?:failed|unable) to allocate/i,
+  /no available memory/i,
+  /cudaMalloc failed/i,
+];
+
+/**
+ * Whether an error thrown by a local model server means the model does not fit
+ * in the available VRAM / memory. Such an error is not retryable (the same model
+ * will fail the same way); the right responses are a smaller model or a warning.
+ */
+export function isInsufficientMemoryError(err: unknown): boolean {
+  if (!err) return false;
+  if (err instanceof InsufficientVRAMError) return true;
+  const msg = err instanceof Error ? err.message : String(err);
+  return INSUFFICIENT_MEMORY_PATTERNS.some((pattern) => pattern.test(msg));
+}
+
+/** One-line, actionable message for an out-of-memory failure (no stack trace). */
+export function insufficientVramMessage(modelsTried: readonly string[]): string {
+  const tried = modelsTried.map((m) => `"${m}"`).join(", ") || "the active model";
+  return (
+    `Not enough GPU memory to load local model ${tried}. ` +
+    `Switch to a smaller model (for example LOCAL_AI_MODEL=llama3.2:3b) ` +
+    `or list smaller ones in LOCAL_AI_FALLBACK_MODELS.`
+  );
+}
+
+/**
+ * Thrown once every configured local model has failed to load for lack of
+ * memory. Carries a ready-to-print message so callers can show it as-is.
+ */
+export class InsufficientVRAMError extends Error {
+  readonly modelsTried: string[];
+
+  constructor(modelsTried: readonly string[]) {
+    super(insufficientVramMessage(modelsTried));
+    this.name = "InsufficientVRAMError";
+    this.modelsTried = [...modelsTried];
+  }
+}

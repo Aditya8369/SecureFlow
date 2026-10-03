@@ -8,7 +8,13 @@ import {
   isTimeoutError,
   withRetry,
 } from "./security-helpers";
-import { getAiInstance, getDefaultModelRef } from "@/ai/genkit";
+import { getAiInstance, getDefaultModelRef, getSecurityExplanationModelChain } from "@/ai/genkit";
+import {
+  InsufficientVRAMError,
+  insufficientVramMessage,
+  isInsufficientMemoryError,
+  isLocalModelEnabled,
+} from "@/ai/local-model";
 import {
   AISecurityExplanationInputSchema,
   AISecurityExplanationOutputSchema,
@@ -73,6 +79,8 @@ export async function developerReceivesAISecurityExplanations(
   // Set to true only when the model returned a real, parseable explanation.
   // Error/fallback text ("Signal lost", rate limit, timeout) must never be cached.
   let cacheable = false;
+  // A smaller fallback model's answer is never cached under the primary model's key.
+  let usedFallbackModel = false;
 
   // Two-layer injection check runs on the raw, attacker-controlled fields BEFORE anything is
   // sent to the main Genkit engine:
@@ -93,26 +101,58 @@ export async function developerReceivesAISecurityExplanations(
 
   try {
     // Route to local model when LOCAL_AI_URL is set, otherwise use the pinned
-    // fast Groq model. Retry logic and fallback chain are preserved for cloud
-    // mode; local mode uses a single model (no cloud fallback by design).
-    const res = await withRetry(
-      () =>
-        activeAi.generate({
-          model: activeModel as any,
-          system: SYSTEM_PROMPT,
-          prompt,
-          config: {
-            maxOutputTokens: 3000,
-            temperature: 0.1,
+    // fast Groq model. Local mode never falls back to a cloud provider, but if
+    // the active local model does not fit in GPU memory it tries the smaller
+    // models in LOCAL_AI_FALLBACK_MODELS before giving up (#1140).
+    const modelsToTry: unknown[] = isLocalModelEnabled()
+      ? getSecurityExplanationModelChain()
+      : [activeModel];
+    let res: { text: string } | undefined;
+    for (let i = 0; i < modelsToTry.length; i++) {
+      const candidate = modelsToTry[i];
+      try {
+        res = await withRetry(
+          () =>
+            activeAi.generate({
+              model: candidate as any,
+              system: SYSTEM_PROMPT,
+              prompt,
+              config: {
+                maxOutputTokens: 3000,
+                temperature: 0.1,
+              },
+            }),
+          {
+            initialDelayMs: process.env.NODE_ENV === "test" ? 10 : 100,
           },
-        }),
-      {
-        initialDelayMs: process.env.NODE_ENV === "test" ? 10 : 100,
-      },
-    );
+        );
+        usedFallbackModel = i > 0;
+        break;
+      } catch (modelErr) {
+        if (!isInsufficientMemoryError(modelErr)) throw modelErr;
+        if (i < modelsToTry.length - 1) {
+          console.warn(
+            `[LOCAL_AI] Model ${getModelId(candidate)} does not fit in GPU memory. Trying smaller model: ${getModelId(modelsToTry[i + 1])}`,
+          );
+        }
+      }
+    }
+    if (!res) throw new InsufficientVRAMError(modelsToTry.map((m) => getModelId(m)));
     responseText = res.text;
   } catch (genError) {
-    if (isRateLimitError(genError)) {
+    if (isInsufficientMemoryError(genError)) {
+      const message =
+        genError instanceof InsufficientVRAMError
+          ? genError.message
+          : insufficientVramMessage([getModelId(activeModel)]);
+      // One actionable line, deliberately without the stack trace.
+      console.warn(`[LOCAL_AI] ${message}`);
+      parsedContent = {
+        explanation: message,
+        remediationSuggestions:
+          "AI explanation unavailable on this hardware: review the static scanner details, or use a smaller local model.",
+      };
+    } else if (isRateLimitError(genError)) {
       console.warn("Groq API rate limit reached after retries:", genError);
       parsedContent = {
         explanation:
@@ -147,7 +187,7 @@ export async function developerReceivesAISecurityExplanations(
       }
 
       parsedContent = JSON.parse(jsonMatch[0]);
-      cacheable = true;
+      cacheable = !usedFallbackModel;
     } catch (error) {
       console.error("Failed to parse explanation JSON:", error);
       console.error("RAW OUTPUT WAS:\n", responseText);

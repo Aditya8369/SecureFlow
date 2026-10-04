@@ -3,14 +3,16 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { LayoutDashboard, Users, ScrollText, ShieldAlert, ArrowLeft, Activity } from "lucide-react";
+import { LayoutDashboard, Users, ScrollText, ShieldAlert, ArrowLeft, Activity, Cpu } from "lucide-react";
 
 const ADMIN_NAV = [
   { name: "Dashboard", href: "/admin", icon: LayoutDashboard, exact: true },
+  { name: "AI Health & Breakers", href: "/dashboard/ai-health", icon: Cpu, exact: false },
   { name: "Queue Monitor", href: "/admin/queue", icon: Activity, exact: false },
   { name: "Users", href: "/admin/users", icon: Users, exact: false },
   { name: "Audit Logs", href: "/admin/logs", icon: ScrollText, exact: false },
 ];
+
 
 function isActive(pathname: string | null, href: string, exact: boolean) {
   if (!pathname) return false;

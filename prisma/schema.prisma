@@ -139,11 +139,13 @@ model PolicyTemplate {
   severity    FindingSeverity @default(HIGH)
   action      String          @default("REVIEW REQUIRED")
   rules       Json
-  isDefault   Boolean         @default(false)
+  isDefault      Boolean         @default(false)
+  complianceTags String[]        @default([])
 
   activeToggles UserPolicyToggle[]
   createdAt     DateTime           @default(now())
 }
+
 
 model UserPolicyToggle {
   id               String  @id @default(cuid())
@@ -212,8 +214,10 @@ model Finding {
   remediation              String?
   promptInjectionSuspected Boolean           @default(false)
   fingerprint              String            @default("")
+  complianceTags           String[]          @default([])
   createdAt                DateTime          @default(now())
   remediationPatch         RemediationPatch?
+
 
   @@index([scanResultId])
   @@index([fingerprint])

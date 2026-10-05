@@ -5,9 +5,6 @@
  * (OWASP, SOC 2, PCI-DSS, HIPAA, ISO 27001) attached to rule tags and results.
  */
 
-import { mapFindingToComplianceTags } from "./taxonomy";
-import { normalizeFindingType, FINDING_CATEGORY_TITLE } from "@/lib/finding-taxonomy";
-import { toStoredSeverity, storedSeverityRank, type StoredSeverity } from "@/lib/severity";
 
 export type SarifLevel = "error" | "warning" | "note";
 

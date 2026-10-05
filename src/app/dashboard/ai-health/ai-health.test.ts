@@ -1,4 +1,3 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
 import { getAiHealthReport, getModelDisplayName, DEFAULT_PRIMARY_GROQ_MODEL } from "@/ai/telemetry";
 import { resetModelCircuitBreakers, tripModelCircuitBreaker, resetModelCircuitBreaker } from "@/ai/resilience";
 

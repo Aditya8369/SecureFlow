@@ -4,26 +4,6 @@ import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Activity,
-  AlertTriangle,
-  CheckCircle2,
-  XCircle,
-  RefreshCw,
-  Power,
-  RotateCcw,
-  Zap,
-  Clock,
-  TrendingUp,
-  Cpu,
-  Server,
-  Shuffle,
-  ShieldCheck,
-  ShieldAlert,
-  ArrowRight,
-  Info,
-  Trash2,
-} from "lucide-react";
 import type { AiHealthReport, ModelHealthStatus, FailoverEvent } from "@/ai/telemetry";
 
 interface AiHealthClientProps {
